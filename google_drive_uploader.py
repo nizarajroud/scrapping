@@ -62,7 +62,8 @@ def upload_file(file_path, credentials_path='credentials.json', token_path='toke
         return False
 
 def main():
-    default_file = "/mnt/c/Users/ben0711b/DOCS/PERSO/scrap/combined_reels.mp3"
+    USER = os.getenv('USER', 'user')
+    default_file = f"/mnt/c/Users/{USER}/DOCS/PERSO/scrap/combined_reels.mp3"
     
     if len(sys.argv) < 2:
         confirm = input(f"Upload {default_file}? (Y/n): ").lower().strip()

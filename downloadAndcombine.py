@@ -100,7 +100,8 @@ def main():
         return
     
     # Ask user to confirm output directory
-    output_dir = "/mnt/c/Users/ben0711b/DOCS/PERSO/scrap"
+    USER = os.getenv('USER', 'user')
+    output_dir = f"/mnt/c/Users/{USER}/DOCS/PERSO/scrap"
     confirm = input(f"Save files to {output_dir}? (Y/n): ").lower().strip()
     if confirm and confirm != 'y':
         output_dir = input("Enter output directory: ").strip()

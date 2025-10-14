@@ -77,7 +77,8 @@ def upload_video(video_path, title="Uploaded Video", description="", privacy="pr
         return False
 
 def main():
-    default_video = "/mnt/c/Users/ben0711b/DOCS/PERSO/scrap/combined_reels.mp4"
+    USER = os.getenv('USER', 'user')
+    default_video = f"/mnt/c/Users/{USER}/DOCS/PERSO/scrap/combined_reels.mp4"
     
     if len(sys.argv) < 2:
         confirm = input(f"Upload {default_video}? (Y/n): ").lower().strip()
