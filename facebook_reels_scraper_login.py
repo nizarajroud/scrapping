@@ -7,10 +7,12 @@ from webdriver_manager.chrome import ChromeDriverManager
 import time
 import random
 import os
+from datetime import datetime
 
 def load_credentials():
     """Load Facebook credentials from .my-secrets file"""
     secrets_file = os.path.expanduser("~/.my-secrets")
+    full_path = os.path.abspath(secrets_file)
     credentials = {}
     
     try:
@@ -27,14 +29,14 @@ def load_credentials():
         if not fb_email or not fb_password:
             raise ValueError("FCB_LOGIN or FCB_PWD not found in secrets file")
             
-        return fb_email, fb_password
+        return fb_email, fb_password, full_path
         
     except FileNotFoundError:
-        print(f"❌ Secrets file not found: {secrets_file}")
-        return None, None
+        print(f"❌ Secrets file not found: {full_path}")
+        return None, None, full_path
     except Exception as e:
         print(f"❌ Error reading credentials: {e}")
-        return None, None
+        return None, None, full_path
 
 def human_like_scroll(driver, scroll_type="smooth"):
     """Simulate human-like scrolling patterns"""
@@ -272,46 +274,57 @@ if __name__ == "__main__":
     print("🔐 Facebook Reels Scraper")
     print("=" * 30)
     
+    # Generate default path with date and random number
+    now = datetime.now()
+    day_name = now.strftime("%A")
+    date_str = now.strftime("%d-%m")
+    random_num = random.randint(10, 99)
+    default_path = f"/mnt/d/PERSONAL/scrap/{day_name}-{date_str}-{random_num}"
+    
+    # Get output path
+    output_path = input(f"Enter output directory (or press Enter for default {default_path}): ").strip()
+    if not output_path:
+        output_path = default_path
+    
+    output_file = os.path.join(output_path, "scrapped-urls.txt")
+    print(f"📁 Output file: {output_file}")
+    print()
+    
     # Load Facebook credentials from secrets file
-    FB_EMAIL, FB_PASS = load_credentials()
+    FB_EMAIL, FB_PASS, credentials_path = load_credentials()
     
     if not FB_EMAIL or not FB_PASS:
         print("❌ Could not load Facebook credentials from ~/.my-secrets")
         print("💡 Make sure FCB_LOGIN and FCB_PWD are set in the file")
         exit(1)
     
-    print(f"✅ Loaded credentials for: {FB_EMAIL}")
+    print(f"✅ Loaded credentials for: {FB_EMAIL} from {credentials_path}")
     
     # Get target URL
-    default_url = "https://www.facebook.com/M.Elkotby2002/reels/"
-    url = input(f"Enter Facebook reels page URL (or press Enter for default): ").strip()
+    url = input("Enter Facebook reels page URL: ").strip()
     if not url:
-        url = default_url
-    
-    # Ask if user wants to see browser (for debugging)
-    show_browser = input("Show browser window for debugging? (y/N): ").strip().lower()
+        print("❌ URL is required. Exiting.")
+        exit(1)
     
     print(f"\n🚀 Starting aggressive scraper for: {url}")
     print("⏳ This will continue until all reels are found...")
     print("💡 Note: This may take several minutes for pages with many reels")
     
     try:
-        # Temporarily disable headless if user wants to see browser
-        if show_browser == 'y':
-            print("🖥️ Browser window will be visible for debugging")
         
         reels = get_reel_links(url, FB_EMAIL, FB_PASS, max_scrolls=1000, delay=2)
         
         print(f"\n🎉 Successfully found {len(reels)} unique reels!")
         print("=" * 60)
         
-        # Save URLs to output.txt
-        with open("output.txt", "w", encoding="utf-8") as f:
+        # Save URLs to scrapped-urls.txt
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        with open(output_file, "w", encoding="utf-8") as f:
             for url in reels:
                 f.write(url + "\n")
         
         if reels:
-            print(f"📁 URLs saved to output.txt")
+            print(f"📁 URLs saved to {output_file}")
             for i, r in enumerate(reels, 1):
                 print(f"{i:3d}. {r}")
         else:
