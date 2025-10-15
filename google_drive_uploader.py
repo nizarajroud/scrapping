@@ -71,10 +71,12 @@ def main():
             file_path = input("Enter file path: ").strip()
         else:
             file_path = default_file
-        credentials_path = '/home/nizar/my-secrets-files/nizar-ajroud-gdrive-creds.json'
+        
+        credentials_input = input(f"Enter credentials path (default: /home/nizar/my-secrets-files/nizar-gdrive-creds.json): ").strip()
+        credentials_path = credentials_input if credentials_input else '/home/nizar/my-secrets-files/nizar-gdrive-creds.json'
     else:
         file_path = sys.argv[1]
-        credentials_path = sys.argv[2] if len(sys.argv) > 2 else '/home/nizar/my-secrets-files/nizar-ajroud-gdrive-creds.json'
+        credentials_path = sys.argv[2] if len(sys.argv) > 2 else '/home/nizar/my-secrets-files/nizar-gdrive-creds.json'
     
     if not Path(file_path).exists():
         print(f"❌ File not found: {file_path}")
