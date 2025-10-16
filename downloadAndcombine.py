@@ -91,12 +91,13 @@ def combine_videos_ffmpeg(video1_path, video2_path, output_path):
         return False
 
 def main():
-    # Read URLs from output.txt first
+    # Read URLs from scrapped-urls.txt in the specified directory
+    scrapping_file = "/mnt/d/PERSONAL/scrap/Wednesday-15-10-83/scrapped-urls.txt"
     try:
-        with open("output.txt", "r", encoding="utf-8") as f:
+        with open(scrapping_file, "r", encoding="utf-8") as f:
             urls = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
-        print("❌ output.txt not found. Please run the scraper first.")
+        print(f"❌ {scrapping_file} not found. Please run the scraper first.")
         return
     
     # Ask user to confirm output directory
@@ -111,12 +112,12 @@ def main():
     os.chdir(output_dir)
     
     if not urls:
-        print("❌ No URLs found in output.txt")
+        print(f"❌ No URLs found in {scrapping_file}")
         return
     
     print("Facebook Reel Video Combiner")
     print("=" * 40)
-    print(f"Found {len(urls)} URLs in output.txt")
+    print(f"Found {len(urls)} URLs in {scrapping_file}")
     
     # Check FFmpeg first
     print("Checking for FFmpeg...")
