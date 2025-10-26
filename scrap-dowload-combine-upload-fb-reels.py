@@ -372,12 +372,16 @@ def main():
     day_name = now.strftime("%A")
     date_str = now.strftime("%d-%m")
     random_num = random.randint(10, 99)
-    default_path = f"/mnt/d/PERSONAL/scrap/{day_name}-{date_str}-{random_num}"
+    default_base_path = f"/mnt/d/PERSONAL/scrap/{day_name}-{date_str}-{random_num}"
     
-    # Get output path
-    output_path = input(f"Enter output directory (or press Enter for default {default_path}): ").strip()
-    if not output_path:
-        output_path = default_path
+    # Get base output path
+    base_path = input(f"Enter base directory (or press Enter for default {default_base_path}): ").strip()
+    if not base_path:
+        base_path = default_base_path
+    
+    # Create folder with reel name
+    output_path = os.path.join(base_path, reel_name)
+    os.makedirs(output_path, exist_ok=True)
     
     output_file = os.path.join(output_path, "scrapped-urls.txt")
     print(f"📁 Output file: {output_file}")
@@ -458,12 +462,12 @@ def main():
                     
                     # Generate filename with date
                     date_str = now.strftime("%d-%m-%y")
-                    output_video = f"{reel_name}-{date_str}.mp4"
+                    output_video = os.path.join(output_path, f"{reel_name}-{date_str}.mp4")
                     
                     # Normalize each video
                     normalized_files = []
                     for i, video in enumerate(video_files):
-                        norm_file = f"norm_{i}.mp4"
+                        norm_file = os.path.join(output_path, f"norm_{i}.mp4")
                         cmd = [
                             'ffmpeg', '-i', video,
                             '-vf', 'scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2',
@@ -475,7 +479,7 @@ def main():
                         normalized_files.append(norm_file)
                     
                     # Concat videos
-                    filelist_path = "temp_filelist.txt"
+                    filelist_path = os.path.join(output_path, "temp_filelist.txt")
                     with open(filelist_path, 'w') as f:
                         for norm_file in normalized_files:
                             f.write(f"file '{os.path.abspath(norm_file)}'\n")
@@ -493,7 +497,7 @@ def main():
                         
                         # Extract MP3 audio
                         print("Extracting MP3 audio...")
-                        mp3_file = f"{reel_name}-{date_str}.mp3"
+                        mp3_file = os.path.join(output_path, f"{reel_name}-{date_str}.mp3")
                         mp3_cmd = [
                             'ffmpeg', '-i', output_video,
                             '-vn', '-acodec', 'mp3', '-ab', '192k', '-y', mp3_file
