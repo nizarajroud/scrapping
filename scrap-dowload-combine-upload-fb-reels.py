@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Facebook Reels Scraper, Downloader, Combiner and Google Drive Uploader
+Facebook Reels Scraper, Downloader, Combiner, Google Drive & YouTube Uploader
 """
 
 from selenium import webdriver
@@ -31,7 +31,7 @@ def install_ytdlp():
             return False
     return True
 
-def install_gdrive_dependencies():
+def install_google_dependencies():
     """Install required Google API packages"""
     packages = ['google-api-python-client', 'google-auth-httplib2', 'google-auth-oauthlib']
     for package in packages:
@@ -291,9 +291,67 @@ def upload_to_gdrive(file_path, credentials_path, token_path):
         print(f"❌ Upload failed: {e}")
         return False
 
+def upload_to_youtube(video_path, title, description="", privacy="private", credentials_path='credentials.json', token_path='youtube_token.json'):
+    """Upload video to YouTube"""
+    try:
+        from googleapiclient.discovery import build
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from googleapiclient.http import MediaFileUpload
+        
+        SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
+        
+        creds = None
+        if os.path.exists(token_path):
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+        
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                if not os.path.exists(credentials_path):
+                    print(f"❌ {credentials_path} not found")
+                    return False
+                
+                flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
+                creds = flow.run_local_server(port=8080)
+            
+            with open(token_path, 'w') as token:
+                token.write(creds.to_json())
+        
+        youtube = build('youtube', 'v3', credentials=creds)
+        
+        body = {
+            'snippet': {
+                'title': title,
+                'description': description,
+                'categoryId': '22'
+            },
+            'status': {
+                'privacyStatus': privacy
+            }
+        }
+        
+        media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
+        request = youtube.videos().insert(part=','.join(body.keys()), body=body, media_body=media)
+        response = request.execute()
+        
+        video_id = response['id']
+        print(f"✓ Uploaded to YouTube: {os.path.basename(video_path)} (https://youtube.com/watch?v={video_id})")
+        return True
+        
+    except Exception as e:
+        if 'youtubeSignupRequired' in str(e):
+            print("❌ YouTube channel verification required")
+            print("Create/verify your YouTube channel at: https://www.youtube.com/verify")
+        else:
+            print(f"❌ YouTube upload failed: {e}")
+        return False
+
 def main():
-    print("🔐 Facebook Reels Scraper, Downloader, Combiner & Uploader")
-    print("=" * 60)
+    print("🔐 Facebook Reels Scraper, Downloader, Combiner & Multi-Platform Uploader")
+    print("=" * 70)
     
     # Get target URL first
     url = input("Enter Facebook reels page URL: ").strip()
@@ -305,6 +363,9 @@ def main():
     reel_name = input("Enter name for combined reels: ").strip()
     if not reel_name:
         reel_name = "combined_reels"
+    
+    # Replace spaces with dashes
+    reel_name = reel_name.replace(" ", "-")
     
     # Generate default path with date and random number
     now = datetime.now()
@@ -350,9 +411,9 @@ def main():
         if reels:
             print(f"📁 URLs saved to {output_file}")
             
-            # Ask if user wants to download and combine
-            download_choice = input("\nDownload and combine videos? (Y/n): ").strip().lower()
-            if download_choice != 'n':
+            # Automatically download and combine videos
+            print("\n🚀 Starting download and combine process...")
+            if True:
                 # Re-read URLs from file in case it was manually edited
                 try:
                     with open(output_file, "r", encoding="utf-8") as f:
@@ -442,35 +503,58 @@ def main():
                         if mp3_result.returncode == 0:
                             print(f"✓ MP3 audio saved as: {mp3_file}")
                             
-                            # Ask for Google Drive upload
-                            upload_choice = input(f"\nUpload {mp3_file} to Google Drive? (Y/n): ").strip().lower()
-                            if upload_choice != 'n':
-                                # Get Google Drive credentials path
+                            # Ask for uploads
+                            print("\n" + "="*50)
+                            print("UPLOAD OPTIONS")
+                            print("="*50)
+                            
+                            # YouTube upload
+                            youtube_choice = input(f"\nUpload {output_video} to YouTube? (Y/n): ").strip().lower()
+                            if youtube_choice != 'n':
+                                youtube_creds = input("Enter YouTube credentials path (default: /home/nizar/my-secrets-files/nizar-youtube-creds.json): ").strip()
+                                if not youtube_creds:
+                                    youtube_creds = '/home/nizar/my-secrets-files/nizar-youtube-creds.json'
+                                
+                                youtube_title = input(f"Enter YouTube title (default: {reel_name}): ").strip()
+                                if not youtube_title:
+                                    youtube_title = reel_name
+                                
+                                privacy = input("Enter privacy setting (private/public/unlisted, default: private): ").strip().lower()
+                                if privacy not in ['private', 'public', 'unlisted']:
+                                    privacy = 'private'
+                                
+                                youtube_token = os.path.join(output_path, 'youtube_token.json')
+                                
+                                print("Installing Google API dependencies...")
+                                install_google_dependencies()
+                                
+                                print(f"Uploading {output_video} to YouTube...")
+                                upload_to_youtube(output_video, youtube_title, "", privacy, youtube_creds, youtube_token)
+                            
+                            # Google Drive upload
+                            gdrive_choice = input(f"\nUpload {mp3_file} to Google Drive? (Y/n): ").strip().lower()
+                            if gdrive_choice != 'n':
                                 gdrive_creds = input("Enter Google Drive credentials path (default: /home/nizar/my-secrets-files/nizar-gdrive-creds.json): ").strip()
                                 if not gdrive_creds:
                                     gdrive_creds = '/home/nizar/my-secrets-files/nizar-gdrive-creds.json'
                                 
-                                token_path = os.path.join(output_path, 'gdrive_token.json')
+                                gdrive_token = os.path.join(output_path, 'gdrive_token.json')
                                 
-                                print("Installing Google Drive dependencies...")
-                                install_gdrive_dependencies()
-                                
-                                # Upload both files
-                                print(f"Uploading {output_video} to Google Drive...")
-                                upload_to_gdrive(output_video, gdrive_creds, token_path)
+                                if youtube_choice == 'n':  # Only install if not already installed for YouTube
+                                    print("Installing Google API dependencies...")
+                                    install_google_dependencies()
                                 
                                 print(f"Uploading {mp3_file} to Google Drive...")
-                                upload_to_gdrive(mp3_file, gdrive_creds, token_path)
+                                upload_to_gdrive(mp3_file, gdrive_creds, gdrive_token)
                         
-                        # Clean up individual files
-                        cleanup = input("\nDelete individual video files? (Y/n): ").lower().strip()
-                        if cleanup != 'n':
-                            for file in video_files:
-                                try:
-                                    Path(file).unlink()
-                                    print(f"Deleted: {file}")
-                                except Exception as e:
-                                    print(f"Could not delete {file}: {e}")
+                        # Clean up individual files automatically
+                        print("\n🗑️ Cleaning up individual video files...")
+                        for file in video_files:
+                            try:
+                                Path(file).unlink()
+                                print(f"Deleted: {file}")
+                            except Exception as e:
+                                print(f"Could not delete {file}: {e}")
                     else:
                         print(f"FFmpeg error: {result.stderr}")
                 else:
