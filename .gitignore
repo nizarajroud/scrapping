@@ -2,3 +2,5 @@ token.json
 youtube_token.json
 credentials.json
 *.json
+versions
+zzz
