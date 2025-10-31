@@ -120,6 +120,48 @@ def facebook_login(driver, email, password):
     time.sleep(5)
     close_popups(driver)
 
+def access_instagram_via_facebook(driver):
+    """Access Instagram using Facebook login"""
+    print("🔗 Accessing Instagram via Facebook...")
+    driver.get("https://www.instagram.com/accounts/login/")
+    time.sleep(3)
+    
+    close_popups(driver)
+    
+    try:
+        # Look for "Continue with Facebook" button
+        fb_login_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Continue with Facebook')] | //span[contains(text(), 'Continue with Facebook')]/..")
+        fb_login_button.click()
+        time.sleep(5)
+        
+        close_popups(driver)
+        
+        # Handle any Instagram permissions popup
+        try:
+            continue_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Continue')] | //button[contains(text(), 'Authorize')] | //button[contains(text(), 'Allow')]")
+            continue_button.click()
+            time.sleep(3)
+        except:
+            pass
+            
+        close_popups(driver)
+        
+        # Handle "Save Login Info" popup
+        try:
+            not_now_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Not Now')] | //button[contains(text(), 'Skip')]")
+            not_now_button.click()
+            time.sleep(2)
+        except:
+            pass
+            
+        close_popups(driver)
+        
+        print("✓ Successfully accessed Instagram via Facebook")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to access Instagram via Facebook: {e}")
+        return False
+
 def get_reel_links(page_url, email, password, max_scrolls=1000, delay=2, no_new_content_limit=10):
     options = Options()
     options.add_argument("--disable-blink-features=AutomationControlled")
@@ -134,6 +176,12 @@ def get_reel_links(page_url, email, password, max_scrolls=1000, delay=2, no_new_
 
     try:
         facebook_login(driver, email, password)
+        
+        # Check if Instagram URL and access via Facebook
+        is_instagram = "instagram.com" in page_url.lower()
+        if is_instagram:
+            if not access_instagram_via_facebook(driver):
+                print("❌ Failed to access Instagram. Continuing with Facebook login...")
 
         print(f"🌐 Navigating to: {page_url}")
         driver.get(page_url)
@@ -166,21 +214,32 @@ def get_reel_links(page_url, email, password, max_scrolls=1000, delay=2, no_new_
             else:
                 consecutive_no_change += 1
             
-            selectors = [
-                "//a[contains(@href, '/reel/')]",
-                "//a[contains(@href, 'reel')]",
-                "//a[contains(@href, '/videos/')]",
-                "//div[@role='article']//a[contains(@href, 'facebook.com')]",
-            ]
+            # Different selectors for Facebook vs Instagram
+            if is_instagram:
+                selectors = [
+                    "//a[contains(@href, '/reel/')]",
+                    "//a[contains(@href, '/p/')]",
+                    "//article//a[contains(@href, 'instagram.com')]",
+                ]
+            else:
+                selectors = [
+                    "//a[contains(@href, '/reel/')]",
+                    "//a[contains(@href, 'reel')]",
+                    "//a[contains(@href, '/videos/')]",
+                    "//div[@role='article']//a[contains(@href, 'facebook.com')]",
+                ]
             
             for selector in selectors:
                 try:
                     links = driver.find_elements(By.XPATH, selector)
                     for link in links:
                         href = link.get_attribute("href")
-                        if href and ('/reel/' in href or '/videos/' in href):
-                            clean_url = href.split('?')[0].split('#')[0]
-                            if 'facebook.com' in clean_url:
+                        if href:
+                            if is_instagram and ('/reel/' in href or '/p/' in href) and 'instagram.com' in href:
+                                clean_url = href.split('?')[0].split('#')[0]
+                                all_reel_urls.add(clean_url)
+                            elif not is_instagram and ('/reel/' in href or '/videos/' in href) and 'facebook.com' in href:
+                                clean_url = href.split('?')[0].split('#')[0]
                                 all_reel_urls.add(clean_url)
                 except:
                     continue
@@ -354,10 +413,13 @@ def main():
     print("=" * 70)
     
     # Get target URL first
-    url = input("Enter Facebook reels page URL: ").strip()
+    url = input("Enter Facebook/Instagram reels page URL: ").strip()
     if not url:
         print("❌ URL is required. Exiting.")
         exit(1)
+    
+    # Detect if it's Instagram URL
+    is_instagram = "instagram.com" in url.lower()
     
     # Ask for name
     reel_name = input("Enter name for combined reels: ").strip()
