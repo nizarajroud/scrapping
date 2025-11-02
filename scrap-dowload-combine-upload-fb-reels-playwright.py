@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
 """
-Facebook Reels Scraper, Downloader, Combiner, Google Drive & YouTube Uploader
+Facebook Reels Scraper, Downloader, Combiner, Google Drive & YouTube Uploader - Playwright Version
 """
 
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
-from webdriver_manager.chrome import ChromeDriverManager
 import subprocess
 import sys
 import time
@@ -16,6 +10,17 @@ import random
 import os
 from datetime import datetime
 from pathlib import Path
+
+def install_playwright():
+    """Install Playwright"""
+    try:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'playwright'])
+        subprocess.check_call([sys.executable, '-m', 'playwright', 'install', 'chromium'])
+        print("✓ Installed Playwright")
+        return True
+    except subprocess.CalledProcessError:
+        print("✗ Failed to install Playwright")
+        return False
 
 def install_ytdlp():
     """Install yt-dlp"""
@@ -48,193 +53,50 @@ def check_ffmpeg():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-def load_credentials():
-    """Load Facebook credentials from .my-secrets file"""
-    secrets_file = os.path.expanduser("~/.my-secrets")
-    full_path = os.path.abspath(secrets_file)
-    credentials = {}
+def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_content_limit=10):
+    from playwright.sync_api import sync_playwright
     
-    try:
-        with open(secrets_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    credentials[key.strip()] = value.strip()
+    with sync_playwright() as p:
+        browser = p.chromium.launch_persistent_context(
+            user_data_dir=profile_path,
+            headless=False,
+            args=['--disable-blink-features=AutomationControlled']
+        )
         
-        fb_email = credentials.get('FCB_LOGIN')
-        fb_password = credentials.get('FCB_PWD')
+        page = browser.new_page()
         
-        if not fb_email or not fb_password:
-            raise ValueError("FCB_LOGIN or FCB_PWD not found in secrets file")
-            
-        return fb_email, fb_password, full_path
-        
-    except FileNotFoundError:
-        print(f"❌ Secrets file not found: {full_path}")
-        return None, None, full_path
-    except Exception as e:
-        print(f"❌ Error reading credentials: {e}")
-        return None, None, full_path
-
-def close_popups(driver):
-    """Close any popups that might appear"""
-    popup_selectors = [
-        "//div[@role='dialog']//div[@aria-label='Close']",
-        "//div[@role='dialog']//button[contains(@aria-label, 'Close')]",
-        "//div[@role='dialog']//button[contains(@aria-label, 'Dismiss')]",
-        "//button[contains(@aria-label, 'Close')]",
-        "//button[contains(text(), 'Not Now')]",
-        "//button[contains(text(), 'Skip')]",
-        "//div[contains(@aria-label, 'Close')]",
-        "//span[text()='×']/..",
-        "//div[@data-testid='cookie-policy-manage-dialog']//button",
-    ]
-    
-    for selector in popup_selectors:
         try:
-            elements = driver.find_elements(By.XPATH, selector)
-            for element in elements:
-                if element.is_displayed():
-                    element.click()
-                    time.sleep(0.5)
-                    return True
-        except:
-            continue
-    return False
-
-def facebook_login(driver, email, password):
-    """Logs into Facebook using the provided credentials"""
-    driver.get("https://www.facebook.com/login")
-    time.sleep(3)
-    
-    close_popups(driver)
-
-    email_box = driver.find_element(By.ID, "email")
-    password_box = driver.find_element(By.ID, "pass")
-
-    email_box.send_keys(email)
-    password_box.send_keys(password)
-    password_box.send_keys(Keys.RETURN)
-
-    time.sleep(5)
-    close_popups(driver)
-
-def access_instagram_via_facebook(driver):
-    """Access Instagram using Facebook login"""
-    print("🔗 Accessing Instagram via Facebook...")
-    driver.get("https://www.instagram.com/accounts/login/")
-    time.sleep(3)
-    
-    close_popups(driver)
-    
-    try:
-        # Look for "Continue with Facebook" button
-        fb_login_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Continue with Facebook')] | //span[contains(text(), 'Continue with Facebook')]/..")
-        fb_login_button.click()
-        time.sleep(5)
-        
-        close_popups(driver)
-        
-        # Handle any Instagram permissions popup
-        try:
-            continue_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Continue')] | //button[contains(text(), 'Authorize')] | //button[contains(text(), 'Allow')]")
-            continue_button.click()
-            time.sleep(3)
-        except:
-            pass
+            print(f"🌐 Navigating to: {page_url}")
+            page.goto(page_url)
+            page.wait_for_timeout(5000)
             
-        close_popups(driver)
-        
-        # Handle "Save Login Info" popup
-        try:
-            not_now_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Not Now')] | //button[contains(text(), 'Skip')]")
-            not_now_button.click()
-            time.sleep(2)
-        except:
-            pass
+            is_instagram = "instagram.com" in page_url.lower()
             
-        close_popups(driver)
-        
-        print("✓ Successfully accessed Instagram via Facebook")
-        return True
-    except Exception as e:
-        print(f"❌ Failed to access Instagram via Facebook: {e}")
-        return False
-
-def get_reel_links(page_url, email, password, max_scrolls=1000, delay=2, no_new_content_limit=10):
-    options = Options()
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    options.add_argument("--disable-web-security")
-    options.add_argument("--disable-features=VizDisplayCompositor")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-    try:
-        facebook_login(driver, email, password)
-        
-        # Check if Instagram URL and access via Facebook
-        is_instagram = "instagram.com" in page_url.lower()
-        if is_instagram:
-            if not access_instagram_via_facebook(driver):
-                print("❌ Failed to access Instagram. Continuing with Facebook login...")
-
-        print(f"🌐 Navigating to: {page_url}")
-        driver.get(page_url)
-        time.sleep(5)
-        
-        close_popups(driver)
-
-        all_reel_urls = set()
-        scroll_count = 0
-        no_new_content_count = 0
-        consecutive_no_change = 0
-        
-        print("🔄 Starting infinite scroll reel collection...")
-        
-        while scroll_count < max_scrolls:
-            if scroll_count % 5 == 0:
-                close_popups(driver)
+            all_reel_urls = set()
+            scroll_count = 0
+            no_new_content_count = 0
             
-            previous_count = len(all_reel_urls)
-            previous_height = driver.execute_script("return document.body.scrollHeight;")
+            print("🔄 Starting infinite scroll reel collection...")
             
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(random.uniform(2, 4))
-            
-            new_height = driver.execute_script("return document.body.scrollHeight;")
-            if new_height > previous_height:
-                print(f"📈 Page height increased: {previous_height} → {new_height}")
-                consecutive_no_change = 0
-                time.sleep(random.uniform(1, 2))
-            else:
-                consecutive_no_change += 1
-            
-            # Different selectors for Facebook vs Instagram
-            if is_instagram:
-                selectors = [
-                    "//a[contains(@href, '/reel/')]",
-                    "//a[contains(@href, '/p/')]",
-                    "//article//a[contains(@href, 'instagram.com')]",
-                ]
-            else:
-                selectors = [
-                    "//a[contains(@href, '/reel/')]",
-                    "//a[contains(@href, 'reel')]",
-                    "//a[contains(@href, '/videos/')]",
-                    "//div[@role='article']//a[contains(@href, 'facebook.com')]",
-                ]
-            
-            for selector in selectors:
+            while scroll_count < max_scrolls:
+                previous_count = len(all_reel_urls)
+                
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(random.randint(2000, 4000))
+                
+                # Get all links
                 try:
-                    links = driver.find_elements(By.XPATH, selector)
+                    links = page.query_selector_all("a[href]")
                     for link in links:
                         href = link.get_attribute("href")
                         if href:
+                            # Make relative URLs absolute
+                            if href.startswith('/'):
+                                if is_instagram:
+                                    href = f"https://www.instagram.com{href}"
+                                else:
+                                    href = f"https://www.facebook.com{href}"
+                            
                             if is_instagram and ('/reel/' in href or '/p/' in href) and 'instagram.com' in href:
                                 clean_url = href.split('?')[0].split('#')[0]
                                 all_reel_urls.add(clean_url)
@@ -243,51 +105,51 @@ def get_reel_links(page_url, email, password, max_scrolls=1000, delay=2, no_new_
                                 all_reel_urls.add(clean_url)
                 except:
                     continue
+                
+                # Also check data-href attributes
+                try:
+                    elements_with_data = page.query_selector_all("[data-href]")
+                    for element in elements_with_data:
+                        data_href = element.get_attribute("data-href")
+                        if data_href and ('/reel/' in data_href or '/videos/' in data_href):
+                            clean_url = data_href.split('?')[0].split('#')[0]
+                            if 'facebook.com' in clean_url:
+                                all_reel_urls.add(clean_url)
+                except:
+                    pass
+                
+                scroll_count += 1
+                current_count = len(all_reel_urls)
+                
+                if current_count > previous_count:
+                    no_new_content_count = 0
+                    print(f"✅ Found {current_count} total URLs (+{current_count - previous_count} new)")
+                else:
+                    no_new_content_count += 1
+                    print(f"⚠️ No new URLs found ({no_new_content_count}/{no_new_content_limit})")
+                
+                if no_new_content_count >= no_new_content_limit or current_count >= 100:
+                    if current_count >= 100:
+                        print("🏁 Reached 100 URLs limit")
+                    else:
+                        print("🏁 Reached end - no new content loading")
+                    break
+                
+                if scroll_count % 50 == 0:
+                    print("🔄 Refreshing page to load more content...")
+                    page.reload()
+                    page.wait_for_timeout(5000)
             
-            try:
-                elements_with_data = driver.find_elements(By.XPATH, "//*[@data-href]")
-                for element in elements_with_data:
-                    data_href = element.get_attribute("data-href")
-                    if data_href and ('/reel/' in data_href or '/videos/' in data_href):
-                        clean_url = data_href.split('?')[0].split('#')[0]
-                        if 'facebook.com' in clean_url:
-                            all_reel_urls.add(clean_url)
-            except:
-                pass
+            print(f"📊 Completed after {scroll_count} scrolls")
             
-            scroll_count += 1
-            current_count = len(all_reel_urls)
+            filtered_urls = [url for url in all_reel_urls if '/reel/' in url or '/videos/' in url]
+            return filtered_urls
             
-            if current_count > previous_count:
-                no_new_content_count = 0
-                print(f"✅ Found {current_count} total URLs (+{current_count - previous_count} new)")
-            else:
-                no_new_content_count += 1
-                print(f"⚠️ No new URLs found ({no_new_content_count}/{no_new_content_limit})")
-            
-            at_bottom = driver.execute_script("return (window.innerHeight + window.scrollY) >= document.body.scrollHeight - 100;")
-            
-            if (no_new_content_count >= no_new_content_limit and 
-                consecutive_no_change >= 5 and at_bottom):
-                print("🏁 Reached end - no new content loading")
-                break
-            
-            if scroll_count % 50 == 0:
-                print("🔄 Refreshing page to load more content...")
-                driver.refresh()
-                time.sleep(5)
-                close_popups(driver)
-        
-        print(f"📊 Completed after {scroll_count} scrolls")
-        
-        filtered_urls = [url for url in all_reel_urls if '/reel/' in url or '/videos/' in url]
-        return filtered_urls
-        
-    except Exception as e:
-        print(f"❌ Error during scraping: {str(e)}")
-        return []
-    finally:
-        driver.quit()
+        except Exception as e:
+            print(f"❌ Error during scraping: {str(e)}")
+            return []
+        finally:
+            browser.close()
 
 def download_facebook_reel(url, output_name):
     """Download Facebook reel using yt-dlp"""
@@ -409,17 +271,22 @@ def upload_to_youtube(video_path, title, description="", privacy="private", cred
         return False
 
 def main():
-    print("🔐 Facebook Reels Scraper, Downloader, Combiner & Multi-Platform Uploader")
+    print("🔐 Facebook Reels Scraper, Downloader, Combiner & Multi-Platform Uploader (Playwright)")
     print("=" * 70)
+    
+    # Install Playwright if needed
+    try:
+        import playwright
+    except ImportError:
+        print("Installing Playwright...")
+        if not install_playwright():
+            exit(1)
     
     # Get target URL first
     url = input("Enter Facebook/Instagram reels page URL: ").strip()
     if not url:
         print("❌ URL is required. Exiting.")
         exit(1)
-    
-    # Detect if it's Instagram URL
-    is_instagram = "instagram.com" in url.lower()
     
     # Ask for name
     reel_name = input("Enter name for combined reels: ").strip()
@@ -449,21 +316,16 @@ def main():
     print(f"📁 Output file: {output_file}")
     print()
     
-    # Load Facebook credentials from secrets file
-    FB_EMAIL, FB_PASS, credentials_path = load_credentials()
+    # Chrome profile path
+    profile_path = "/home/nizar/Clone-Chrome-profile/User Data"
     
-    if not FB_EMAIL or not FB_PASS:
-        print("❌ Could not load Facebook credentials from ~/.my-secrets")
-        print("💡 Make sure FCB_LOGIN and FCB_PWD are set in the file")
-        exit(1)
-    
-    print(f"✅ Loaded credentials for: {FB_EMAIL} from {credentials_path}")
+    print(f"✅ Using Chrome profile: {profile_path}")
     
     print(f"\n🚀 Starting scraper for: {url}")
     print("⏳ This will continue until all reels are found...")
     
     try:
-        reels = get_reel_links(url, FB_EMAIL, FB_PASS, max_scrolls=1000, delay=2)
+        reels = get_reel_links(url, profile_path, max_scrolls=1000, delay=2)
         
         print(f"\n🎉 Successfully found {len(reels)} unique reels!")
         print("=" * 60)
@@ -569,58 +431,19 @@ def main():
                         if mp3_result.returncode == 0:
                             print(f"✓ MP3 audio saved as: {mp3_file}")
                             
-                            # Ask for uploads
-                            print("\n" + "="*50)
-                            print("UPLOAD OPTIONS")
-                            print("="*50)
+                            # Clean up individual files before upload
+                            print("\n🗑️ Cleaning up individual video files...")
+                            for file in video_files:
+                                try:
+                                    Path(file).unlink()
+                                    print(f"Deleted: {file}")
+                                except Exception as e:
+                                    print(f"Could not delete {file}: {e}")
                             
-                            # YouTube upload
-                            youtube_choice = input(f"\nUpload {output_video} to YouTube? (Y/n): ").strip().lower()
-                            if youtube_choice != 'n':
-                                youtube_creds = input("Enter YouTube credentials path (default: /home/nizar/my-secrets-files/nizar-youtube-creds.json): ").strip()
-                                if not youtube_creds:
-                                    youtube_creds = '/home/nizar/my-secrets-files/nizar-youtube-creds.json'
-                                
-                                youtube_title = input(f"Enter YouTube title (default: {reel_name}): ").strip()
-                                if not youtube_title:
-                                    youtube_title = reel_name
-                                
-                                privacy = input("Enter privacy setting (private/public/unlisted, default: private): ").strip().lower()
-                                if privacy not in ['private', 'public', 'unlisted']:
-                                    privacy = 'private'
-                                
-                                youtube_token = os.path.join(output_path, 'youtube_token.json')
-                                
-                                print("Installing Google API dependencies...")
-                                install_google_dependencies()
-                                
-                                print(f"Uploading {output_video} to YouTube...")
-                                upload_to_youtube(output_video, youtube_title, "", privacy, youtube_creds, youtube_token)
-                            
-                            # Google Drive upload
-                            gdrive_choice = input(f"\nUpload {mp3_file} to Google Drive? (Y/n): ").strip().lower()
-                            if gdrive_choice != 'n':
-                                gdrive_creds = input("Enter Google Drive credentials path (default: /home/nizar/my-secrets-files/nizar-gdrive-creds.json): ").strip()
-                                if not gdrive_creds:
-                                    gdrive_creds = '/home/nizar/my-secrets-files/nizar-gdrive-creds.json'
-                                
-                                gdrive_token = os.path.join(output_path, 'gdrive_token.json')
-                                
-                                if youtube_choice == 'n':  # Only install if not already installed for YouTube
-                                    print("Installing Google API dependencies...")
-                                    install_google_dependencies()
-                                
-                                print(f"Uploading {mp3_file} to Google Drive...")
-                                upload_to_gdrive(mp3_file, gdrive_creds, gdrive_token)
-                        
-                        # Clean up individual files automatically
-                        print("\n🗑️ Cleaning up individual video files...")
-                        for file in video_files:
-                            try:
-                                Path(file).unlink()
-                                print(f"Deleted: {file}")
-                            except Exception as e:
-                                print(f"Could not delete {file}: {e}")
+                            print(f"\n✅ Process completed!")
+                            print(f"📹 Video: {output_video}")
+                            print(f"🎵 Audio: {mp3_file}")
+                            print(f"\n💡 To upload files, use: python3 upload-to-platforms.py <file_path>")
                     else:
                         print(f"FFmpeg error: {result.stderr}")
                 else:
