@@ -53,7 +53,7 @@ def check_ffmpeg():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_content_limit=10):
+def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_content_limit=10, url_limit=100):
     from playwright.sync_api import sync_playwright
     
     with sync_playwright() as p:
@@ -128,9 +128,9 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_con
                     no_new_content_count += 1
                     print(f"⚠️ No new URLs found ({no_new_content_count}/{no_new_content_limit})")
                 
-                if no_new_content_count >= no_new_content_limit or current_count >= 100:
-                    if current_count >= 100:
-                        print("🏁 Reached 100 URLs limit")
+                if no_new_content_count >= no_new_content_limit or current_count >= url_limit:
+                    if current_count >= url_limit:
+                        print(f"🏁 Reached {url_limit} URLs limit")
                     else:
                         print("🏁 Reached end - no new content loading")
                     break
@@ -288,10 +288,31 @@ def main():
         print("❌ URL is required. Exiting.")
         exit(1)
     
+    # Ask for category using pyfzf
+    print("Category of combined-reels:")
+    categories = ["Relg", "Soft", "Kids", "Misc"]
+    try:
+        from pyfzf.pyfzf import FzfPrompt
+        fzf = FzfPrompt()
+        category = fzf.prompt(categories, fzf_options='--no-info --height=5')[0]
+    except ImportError:
+        print("Installing pyfzf...")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pyfzf'])
+        from pyfzf.pyfzf import FzfPrompt
+        fzf = FzfPrompt()
+        category = fzf.prompt(categories, fzf_options='--no-info --height=5')[0]
+    except IndexError:
+        category = "Relg"  # Default if cancelled
+    
+    print(f"Selected category: {category}")
+    
     # Ask for name
     reel_name = input("Enter name for combined reels: ").strip()
     if not reel_name:
         reel_name = "combined_reels"
+    
+    # Add category prefix
+    reel_name = f"{category}-{reel_name}"
     
     # Replace spaces with dashes
     reel_name = reel_name.replace(" ", "-")
@@ -316,6 +337,18 @@ def main():
     print(f"📁 Output file: {output_file}")
     print()
     
+    # Ask for URL limit
+    url_limit = input("Enter maximum number of URLs to scrape (default: 100): ").strip()
+    try:
+        url_limit = int(url_limit) if url_limit else 100
+    except ValueError:
+        url_limit = 100
+    
+    print(f"URL limit set to: {url_limit}")
+    
+    # Ask for MP3 extraction
+    extract_mp3 = input("Extract MP3 audio from combined video? (y/N): ").strip().lower()
+    
     # Chrome profile path
     profile_path = "/home/nizar/Clone-Chrome-profile/User Data"
     
@@ -325,7 +358,7 @@ def main():
     print("⏳ This will continue until all reels are found...")
     
     try:
-        reels = get_reel_links(url, profile_path, max_scrolls=1000, delay=2)
+        reels = get_reel_links(url, profile_path, max_scrolls=1000, delay=2, url_limit=url_limit)
         
         print(f"\n🎉 Successfully found {len(reels)} unique reels!")
         print("=" * 60)
@@ -368,14 +401,20 @@ def main():
                 Path(output_path).mkdir(parents=True, exist_ok=True)
                 os.chdir(output_path)
                 
-                # Download videos
-                print(f"\nDownloading {len(reels)} videos...")
+                # Download videos (limited by user input)
+                print(f"\nDownloading up to {url_limit} videos...")
                 video_files = []
+                download_count = 0
                 for i, reel_url in enumerate(reels, 1):
-                    print(f"Downloading reel {i}/{len(reels)}...")
+                    if download_count >= url_limit:
+                        print(f"Reached download limit of {url_limit} videos")
+                        break
+                    
+                    print(f"Downloading reel {download_count + 1}/{min(len(reels), url_limit)}...")
                     filename = download_facebook_reel(reel_url, f"reel_{i}")
                     if filename and Path(filename).exists():
                         video_files.append(filename)
+                        download_count += 1
                         print(f"✓ Downloaded: {filename}")
                     else:
                         print(f"✗ Failed to download reel {i}")
@@ -419,31 +458,37 @@ def main():
                     if result.returncode == 0:
                         print(f"✓ Combined video saved as: {output_video}")
                         
-                        # Extract MP3 audio
-                        print("Extracting MP3 audio...")
-                        mp3_file = os.path.join(output_path, f"{reel_name}-{date_str}.mp3")
-                        mp3_cmd = [
-                            'ffmpeg', '-i', output_video,
-                            '-vn', '-acodec', 'mp3', '-ab', '192k', '-y', mp3_file
-                        ]
+                        # Extract MP3 audio only if requested
+                        mp3_file = None
+                        if extract_mp3 == 'y':
+                            print("Extracting MP3 audio...")
+                            mp3_file = os.path.join(output_path, f"{reel_name}-{date_str}.mp3")
+                            mp3_cmd = [
+                                'ffmpeg', '-i', output_video,
+                                '-vn', '-acodec', 'mp3', '-ab', '192k', '-y', mp3_file
+                            ]
+                            
+                            mp3_result = subprocess.run(mp3_cmd, capture_output=True, text=True)
+                            if mp3_result.returncode == 0:
+                                print(f"✓ MP3 audio saved as: {mp3_file}")
+                            else:
+                                print(f"❌ Failed to extract MP3: {mp3_result.stderr}")
+                                mp3_file = None
                         
-                        mp3_result = subprocess.run(mp3_cmd, capture_output=True, text=True)
-                        if mp3_result.returncode == 0:
-                            print(f"✓ MP3 audio saved as: {mp3_file}")
-                            
-                            # Clean up individual files before upload
-                            print("\n🗑️ Cleaning up individual video files...")
-                            for file in video_files:
-                                try:
-                                    Path(file).unlink()
-                                    print(f"Deleted: {file}")
-                                except Exception as e:
-                                    print(f"Could not delete {file}: {e}")
-                            
-                            print(f"\n✅ Process completed!")
-                            print(f"📹 Video: {output_video}")
+                        # Clean up individual files
+                        print("\n🗑️ Cleaning up individual video files...")
+                        for file in video_files:
+                            try:
+                                Path(file).unlink()
+                                print(f"Deleted: {file}")
+                            except Exception as e:
+                                print(f"Could not delete {file}: {e}")
+                        
+                        print(f"\n✅ Process completed!")
+                        print(f"📹 Video: {output_video}")
+                        if mp3_file:
                             print(f"🎵 Audio: {mp3_file}")
-                            print(f"\n💡 To upload files, use: python3 upload-to-platforms.py <file_path>")
+                        print(f"\n💡 To upload files, use: python3 upload-to-platforms.py <file_path>")
                     else:
                         print(f"FFmpeg error: {result.stderr}")
                 else:
