@@ -2,7 +2,7 @@
 
 ## Main Features
 
-- **Scrape Facebook Reels**: Automatically extracts reel URLs from Facebook pages using Selenium
+- **Scrape Facebook Reels**: Automatically extracts reel URLs from Facebook pages using Playwright
 - **Download Videos**: Downloads reels using yt-dlp with quality selection
 - **Combine Videos**: Merges multiple reels into a single video file using FFmpeg
 - **Multi-Platform Upload**: Uploads combined videos to:
@@ -12,7 +12,7 @@
 ## Usage
 
 ```bash
-python3 scrap-dowload-combine-upload-fb-reels.py
+python3 social_reels_automation.py
 ```
 
 ## Requirements

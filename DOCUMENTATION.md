@@ -9,12 +9,12 @@ This project is a comprehensive automation tool for scraping Facebook Reels, dow
 ```
 scrapping/
 ├── Core Scripts
-│   ├── scrap-dowload-combine-upload-fb-reels-playwright.py  # Main automation script
-│   ├── upload-to-platforms.py                              # Standalone uploader
-│   └── setup_chrome_user_data_dir.py                      # Chrome profile setup
+│   ├── social_reels_automation.py                         # Main social media reels automation
+│   ├── upload-to-platforms.py                             # Standalone uploader
+│   └── setup_chrome_user_data_dir.py                     # Chrome profile setup
 ├── Utilities
-│   ├── download-youtube-fb-tiktk-etc-videos.bash          # Universal video downloader
-│   └── setup_gcloud_drive.sh                              # Google Cloud setup
+│   ├── social_videos_automation.bash                     # Universal social media video downloader
+│   └── setup_gcloud_drive.sh                             # Google Cloud setup
 ├── Configuration
 │   ├── .env                                               # Environment variables
 │   └── .gitignore                                         # Git ignore rules
@@ -25,7 +25,7 @@ scrapping/
 
 ## Core Components
 
-### 1. Main Automation Script (`scrap-dowload-combine-upload-fb-reels-playwright.py`)
+### 1. Main Automation Script (`social_reels_automation.py`)
 
 **Purpose**: Complete end-to-end automation for Facebook Reels processing
 
@@ -77,7 +77,7 @@ python3 upload-to-platforms.py /path/to/video.mp4
 python setup_chrome_user_data_dir.py --user_data_dir <directory>
 ```
 
-### 4. Universal Video Downloader (`download-youtube-fb-tiktk-etc-videos.bash`)
+### 4. Universal Video Downloader (`social_videos_automation.bash`)
 
 **Purpose**: Comprehensive bash script for downloading videos from multiple platforms
 
@@ -175,7 +175,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install Python dependencies (handled automatically by scripts)
-python3 scrap-dowload-combine-upload-fb-reels-playwright.py
+python3 social_reels_automation.py
 ```
 
 ### 3. Google API Setup
@@ -198,7 +198,7 @@ password:your-facebook-password
 ### Complete Workflow
 ```bash
 # Run main automation script
-python3 scrap-dowload-combine-upload-fb-reels-playwright.py
+python3 social_reels_automation.py
 
 # Follow interactive prompts:
 # 1. Enter Facebook reels page URL
@@ -216,7 +216,7 @@ python3 upload-to-platforms.py /path/to/my-video.mp4
 ### Universal Video Download
 ```bash
 # Interactive video downloader
-./download-youtube-fb-tiktk-etc-videos.bash
+./social_videos_automation.bash
 ```
 
 ### Chrome Profile Setup
