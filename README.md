@@ -1,12 +1,12 @@
-# Facebook Reels Scraper & Multi-Platform Uploader
+# Social Media Reels Scraper & Multi-Platform Uploader
 
 ## Project Overview
 
-This project is a comprehensive automation tool for scraping Facebook Reels, downloading videos, combining them, and uploading to multiple platforms (Google Drive and YouTube). It uses modern web automation with Playwright and provides both interactive and batch processing capabilities.
+This project is a comprehensive automation tool for scraping social media reels from multiple platforms (Facebook, Instagram, TikTok, YouTube), downloading videos, combining them, and uploading to multiple platforms (Google Drive and YouTube). It uses modern web automation with Playwright and provides both interactive and batch processing capabilities.
 
 ## Main Features
 
-- **Scrape Facebook Reels**: Automatically extracts reel URLs from Facebook pages using Playwright
+- **Scrape Social Media Reels**: Automatically extracts reel URLs from multiple platforms (Facebook, Instagram, TikTok, YouTube) using Playwright
 - **Download Videos**: Downloads reels using yt-dlp with quality selection
 - **Combine Videos**: Merges multiple reels into a single video file using FFmpeg
 - **Multi-Platform Upload**: Uploads combined videos to:
@@ -41,14 +41,14 @@ scrapping/
 
 ### 1. Main Automation Script (`social_reels_automation.py`)
 
-**Purpose**: Complete end-to-end automation for Facebook Reels processing
+**Purpose**: Complete end-to-end automation for social media reels processing across multiple platforms
 
 **Key Functions**:
 - `install_playwright()`: Installs Playwright browser automation
 - `install_ytdlp()`: Installs yt-dlp video downloader
 - `install_google_dependencies()`: Installs Google API packages
 - `check_ffmpeg()`: Verifies FFmpeg installation
-- `get_reel_links()`: Scrapes Facebook page for reel URLs using Playwright
+- `get_reel_links()`: Scrapes social media pages for reel URLs using Playwright
 - `download_facebook_reel()`: Downloads individual reels using yt-dlp
 - `upload_to_gdrive()`: Uploads files to Google Drive
 - `upload_to_youtube()`: Uploads videos to YouTube with metadata
@@ -56,8 +56,8 @@ scrapping/
 
 **Workflow**:
 1. Dependency installation and verification
-2. User input collection (Facebook URL, video name, output directory)
-3. Facebook login and reel URL extraction
+2. User input collection (social media URL, video name, output directory)
+3. Platform login and reel URL extraction
 4. Batch video downloading
 5. Video combination using FFmpeg
 6. Multi-platform upload (Google Drive + YouTube)
@@ -125,7 +125,7 @@ python setup_chrome_user_data_dir.py --user_data_dir <directory>
 
 ## Requirements
 
-- Facebook credentials in `~/.my-secrets` file
+- Social media platform credentials in `~/.my-secrets` file
 - Chrome browser
 - FFmpeg installed
 - Google API credentials for Drive/YouTube upload
@@ -160,7 +160,7 @@ USER_DATA_DIR=/home/nizar/Clone-Chrome-profile/User Data
 ```
 
 ### Secrets Management
-- Facebook credentials: `~/.my-secrets` file
+- Social media platform credentials: `~/.my-secrets` file
 - Google credentials: JSON files in `~/my-secrets-files/`
 - OAuth tokens: `token.json`, `youtube_token.json`
 
@@ -207,11 +207,11 @@ python3 social_reels_automation.py
 # Follow manual steps for OAuth2 credential creation
 ```
 
-### 4. Facebook Credentials
-Create `~/.my-secrets` file with Facebook login credentials:
+### 4. Social Media Credentials
+Create `~/.my-secrets` file with platform login credentials:
 ```
-username:your-facebook-email
-password:your-facebook-password
+username:your-email@example.com
+password:your-password
 ```
 
 ## Usage Examples
@@ -222,7 +222,7 @@ password:your-facebook-password
 python3 social_reels_automation.py
 
 # Follow interactive prompts:
-# 1. Enter Facebook reels page URL
+# 1. Enter social media reels page URL (Facebook, Instagram, TikTok, YouTube)
 # 2. Provide combined video name
 # 3. Choose output directory
 # 4. Wait for automated processing
@@ -248,11 +248,11 @@ python setup_chrome_user_data_dir.py --user_data_dir /path/to/profile
 
 ## Workflow
 
-1. Enter Facebook reels page URL
+1. Enter social media reels page URL (Facebook, Instagram, TikTok, YouTube)
 2. Provide name for combined video
 3. Choose output directory
 4. Script automatically:
-   - Logs into Facebook
+   - Logs into the platform
    - Scrapes reel URLs
    - Downloads videos
    - Combines them into one file
@@ -325,7 +325,7 @@ ffmpeg -version
 - Check OAuth2 consent screen configuration
 - Ensure proper API scopes
 
-**4. Facebook Login Issues**
+**4. Social Media Login Issues**
 - Update credentials in ~/.my-secrets
 - Clear browser cache/cookies
 - Check for CAPTCHA requirements
