@@ -8,6 +8,7 @@ import sys
 import time
 import random
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -296,7 +297,7 @@ def main():
     
     # Ask for category using pyfzf
     print("Category of combined-reels:")
-    categories = ["Relg", "Soft", "Kids", "Misc"]
+    categories = os.getenv('CATEGORIES', 'Relg,Soft,Kids,Misc,English').split(',')
     try:
         from pyfzf.pyfzf import FzfPrompt
         fzf = FzfPrompt()
@@ -351,9 +352,6 @@ def main():
         url_limit = 100
     
     print(f"URL limit set to: {url_limit}")
-    
-    # Ask for MP3 extraction
-    extract_mp3 = input("Extract MP3 audio from combined video? (y/N): ").strip().lower()
     
     # Chrome profile path
     profile_path = "/home/nizar/Clone-Chrome-profile/User Data"
@@ -464,22 +462,15 @@ def main():
                     if result.returncode == 0:
                         print(f"✓ Combined video saved as: {output_video}")
                         
+                        # Move to target directory
+                        target_dir = "/mnt/g/Mon Drive/FORMATIONS/SoftSkills/Infuse"
+                        os.makedirs(target_dir, exist_ok=True)
+                        target_path = os.path.join(target_dir, os.path.basename(output_video))
+                        shutil.move(output_video, target_path)
+                        print(f"✓ Moved to: {target_path}")
+                        output_video = target_path
+                        
                         # Extract MP3 audio only if requested
-                        mp3_file = None
-                        if extract_mp3 == 'y':
-                            print("Extracting MP3 audio...")
-                            mp3_file = os.path.join(output_path, f"{reel_name}-{date_str}.mp3")
-                            mp3_cmd = [
-                                'ffmpeg', '-i', output_video,
-                                '-vn', '-acodec', 'mp3', '-ab', '192k', '-y', mp3_file
-                            ]
-                            
-                            mp3_result = subprocess.run(mp3_cmd, capture_output=True, text=True)
-                            if mp3_result.returncode == 0:
-                                print(f"✓ MP3 audio saved as: {mp3_file}")
-                            else:
-                                print(f"❌ Failed to extract MP3: {mp3_result.stderr}")
-                                mp3_file = None
                         
                         # Clean up individual files
                         print("\n🗑️ Cleaning up individual video files...")
@@ -492,9 +483,8 @@ def main():
                         
                         print(f"\n✅ Process completed!")
                         print(f"📹 Video: {output_video}")
-                        if mp3_file:
-                            print(f"🎵 Audio: {mp3_file}")
-                        print(f"\n💡 To upload files, use: python3 upload-to-platforms.py <file_path>")
+                        print(f"\n💡 To extract audio: python3 extract_audio.py {output_video}")
+                        print(f"💡 To upload files: python3 upload-to-platforms.py <file_path>")
                     else:
                         print(f"FFmpeg error: {result.stderr}")
                 else:
