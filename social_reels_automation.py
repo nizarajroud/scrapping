@@ -163,8 +163,9 @@ def download_facebook_reel(url, output_name):
     try:
         cmd = [
             'yt-dlp',
+            '--extractor-args', 'youtube:player_client=android',
+            '-f', 'bv*+ba/b',
             '--no-check-certificate',
-            '--format', 'best[ext=mp4]',
             '--output', f'{output_name}.%(ext)s',
             url
         ]
@@ -301,13 +302,13 @@ def main():
     try:
         from pyfzf.pyfzf import FzfPrompt
         fzf = FzfPrompt()
-        category = fzf.prompt(categories, fzf_options='--no-info --height=5')[0]
+        category = fzf.prompt(categories, fzf_options='--no-info')[0]
     except ImportError:
         print("Installing pyfzf...")
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pyfzf'])
         from pyfzf.pyfzf import FzfPrompt
         fzf = FzfPrompt()
-        category = fzf.prompt(categories, fzf_options='--no-info --height=5')[0]
+        category = fzf.prompt(categories, fzf_options='--no-info')[0]
     except IndexError:
         category = "Relg"  # Default if cancelled
     
