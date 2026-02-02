@@ -24,17 +24,25 @@ def install_playwright():
         return False
 
 def install_ytdlp():
-    """Install yt-dlp"""
+    """Install/update yt-dlp and dependencies"""
     try:
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'yt-dlp'])
-        print("✓ Installed yt-dlp")
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', 'yt-dlp'])
+        print("✓ Updated yt-dlp")
     except subprocess.CalledProcessError:
         try:
-            subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--user', 'yt-dlp'])
-            print("✓ Installed yt-dlp with --user flag")
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--upgrade', '--user', 'yt-dlp'])
+            print("✓ Updated yt-dlp with --user flag")
         except subprocess.CalledProcessError:
-            print("✗ Failed to install yt-dlp")
+            print("✗ Failed to update yt-dlp")
             return False
+    
+    # Install curl_cffi for TikTok impersonation
+    try:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'curl_cffi'])
+        print("✓ Installed curl_cffi for TikTok support")
+    except subprocess.CalledProcessError:
+        print("⚠ curl_cffi installation failed (TikTok may not work)")
+    
     return True
 
 def install_google_dependencies():
@@ -54,13 +62,24 @@ def check_ffmpeg():
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_content_limit=10, url_limit=100):
+def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_content_limit=10, url_limit=100, headless=None):
     from playwright.sync_api import sync_playwright
+    
+    if headless is None:
+        headless_env = os.getenv('HEADLESS')
+        if headless_env == '1':
+            headless = True
+        else:
+            from pyfzf.pyfzf import FzfPrompt
+            fzf = FzfPrompt()
+            options = ["Visible (you can see the browser)", "Headless (background, faster)"]
+            choice = fzf.prompt(options, "--prompt='Select browser mode: '")
+            headless = choice and "Headless" in choice[0]
     
     with sync_playwright() as p:
         browser = p.chromium.launch_persistent_context(
             user_data_dir=profile_path,
-            headless=False,
+            headless=headless,
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -73,6 +92,7 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_con
             
             is_instagram = "instagram.com" in page_url.lower()
             is_youtube = "youtube.com" in page_url.lower()
+            is_tiktok = "tiktok.com" in page_url.lower()
             
             all_reel_urls = set()
             scroll_count = 0
@@ -98,6 +118,8 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_con
                                     href = f"https://www.instagram.com{href}"
                                 elif is_youtube:
                                     href = f"https://www.youtube.com{href}"
+                                elif is_tiktok:
+                                    href = f"https://www.tiktok.com{href}"
                                 else:
                                     href = f"https://www.facebook.com{href}"
                             
@@ -107,7 +129,10 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_con
                             elif is_youtube and '/shorts/' in href and 'youtube.com' in href:
                                 clean_url = href.split('?')[0].split('#')[0]
                                 all_reel_urls.add(clean_url)
-                            elif not is_instagram and not is_youtube and ('/reel/' in href or '/videos/' in href) and 'facebook.com' in href:
+                            elif is_tiktok and '/video/' in href and 'tiktok.com' in href:
+                                clean_url = href.split('?')[0].split('#')[0]
+                                all_reel_urls.add(clean_url)
+                            elif not is_instagram and not is_youtube and not is_tiktok and ('/reel/' in href or '/videos/' in href) and 'facebook.com' in href:
                                 clean_url = href.split('?')[0].split('#')[0]
                                 all_reel_urls.add(clean_url)
                 except:
@@ -149,7 +174,7 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_con
             
             print(f"📊 Completed after {scroll_count} scrolls")
             
-            filtered_urls = [url for url in all_reel_urls if '/reel/' in url or '/videos/' in url or '/shorts/' in url]
+            filtered_urls = [url for url in all_reel_urls if '/reel/' in url or '/videos/' in url or '/shorts/' in url or '/video/' in url]
             return filtered_urls
             
         except Exception as e:
@@ -159,16 +184,27 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, no_new_con
             browser.close()
 
 def download_facebook_reel(url, output_name):
-    """Download Facebook reel using yt-dlp"""
+    """Download reel using yt-dlp with platform-specific options"""
     try:
+        # Use python module to ensure updated version
         cmd = [
-            'yt-dlp',
-            '--extractor-args', 'youtube:player_client=android',
-            '-f', 'bv*+ba/b',
+            sys.executable, '-m', 'yt_dlp',
             '--no-check-certificate',
+            '-f', 'bv*+ba/b',
             '--output', f'{output_name}.%(ext)s',
-            url
         ]
+        
+        # Add platform-specific options
+        if 'tiktok.com' in url:
+            # Use cookies from Chrome profile for TikTok
+            cookies_path = os.path.expanduser('~/Clone-Chrome-profile/User Data/Default/Cookies')
+            if os.path.exists(cookies_path):
+                cmd.extend(['--cookies-from-browser', 'chrome'])
+        else:
+            cmd.extend(['--extractor-args', 'youtube:player_client=android'])
+        
+        cmd.append(url)
+        
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             return f'{output_name}.mp4'
@@ -291,7 +327,7 @@ def main():
             exit(1)
     
     # Get target URL first
-    url = input("Enter Facebook/Instagram/YouTube page URL: ").strip()
+    url = input("Enter Facebook/Instagram/TikTok/YouTube page URL: ").strip()
     if not url:
         print("❌ URL is required. Exiting.")
         exit(1)
@@ -314,8 +350,19 @@ def main():
     
     print(f"Selected category: {category}")
     
+    # Ask for duplication count
+    dup_count = input("\nEnter duplication count for each video (default: 1, no duplication): ").strip()
+    try:
+        dup_count = int(dup_count) if dup_count else 1
+        dup_count = max(1, dup_count)
+    except ValueError:
+        dup_count = 1
+    
+    if dup_count > 1:
+        print(f"✓ Each video will be duplicated {dup_count} times")
+    
     # Ask for name
-    reel_name = input("Enter name for combined reels: ").strip()
+    reel_name = input("\nEnter name for combined reels: ").strip()
     if not reel_name:
         reel_name = "combined_reels"
     
@@ -383,8 +430,12 @@ def main():
                 # Re-read URLs from file in case it was manually edited
                 try:
                     with open(output_file, "r", encoding="utf-8") as f:
-                        reels = [line.strip() for line in f if line.strip()]
-                    print(f"📖 Re-read {len(reels)} URLs from {output_file}")
+                        all_urls = [line.strip() for line in f if line.strip()]
+                    
+                    # Filter to keep only video URLs
+                    reels = [url for url in all_urls if '/video/' in url or '/reel/' in url or '/shorts/' in url or '/videos/' in url]
+                    
+                    print(f"📖 Re-read {len(all_urls)} URLs, filtered to {len(reels)} video URLs")
                 except Exception as e:
                     print(f"❌ Error re-reading URLs: {e}")
                     return
@@ -398,7 +449,7 @@ def main():
                     print("✓ FFmpeg found")
                 
                 # Install yt-dlp
-                print("Installing yt-dlp...")
+                print("Installing/updating yt-dlp...")
                 if not install_ytdlp():
                     return
                 
@@ -450,7 +501,8 @@ def main():
                     filelist_path = os.path.join(output_path, "temp_filelist.txt")
                     with open(filelist_path, 'w') as f:
                         for norm_file in normalized_files:
-                            f.write(f"file '{os.path.abspath(norm_file)}'\n")
+                            for _ in range(dup_count):
+                                f.write(f"file '{os.path.abspath(norm_file)}'\n")
                     
                     cmd = ['ffmpeg', '-f', 'concat', '-safe', '0', '-i', filelist_path, '-c', 'copy', '-y', output_video]
                     result = subprocess.run(cmd, capture_output=True, text=True)

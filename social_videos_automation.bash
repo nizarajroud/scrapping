@@ -517,9 +517,16 @@ download_gallery_dl() {
 download_custom_dir() {
     local url="$1"
     local cookies="$2"
-    echo -n "Enter download directory (default: ~/Downloads): "
+    
+    # Generate default path with date and random number
+    local day_name=$(date +"%A")
+    local date_str=$(date +"%d-%m")
+    local random_num=$((RANDOM % 90 + 10))
+    local default_path="/mnt/d/PERSONAL/scrap/${day_name}-${date_str}-${random_num}"
+    
+    echo -n "Enter download directory (or press Enter for default: $default_path): "
     read -r custom_dir
-    custom_dir="${custom_dir:-$HOME/Downloads}"
+    custom_dir="${custom_dir:-$default_path}"
     
     # Create directory if it doesn't exist
     mkdir -p "$custom_dir"
