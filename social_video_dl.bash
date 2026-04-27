@@ -7,6 +7,12 @@
 
 set -e  # Exit on any error
 
+# Load specific variables from .env
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    RUNNING_TODO_PATH=$(grep -E '^RUNNING_TODO_PATH=' "$SCRIPT_DIR/.env" | cut -d= -f2- | tr -d '"')
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -246,24 +252,21 @@ get_video_info() {
     esac
 }
 
-# Enhanced download menu with Facebook-specific options
+# Download menu with FZF
 download_menu() {
     local url="$1"
     local platform="$2"
     local options=()
     
-    # Common options for all platforms
     options+=(
         "best_quality:Download best quality video"
         "720p:Download 720p video"
         "480p:Download 480p video"
         "audio_mp3:Download audio as MP3"
         "audio_best:Download best quality audio"
-        "custom_dir:Download to custom directory"
         "list_formats:List available formats"
     )
     
-    # Platform-specific options
     case $platform in
         "youtube")
             options+=(
@@ -289,80 +292,31 @@ download_menu() {
             ;;
     esac
     
-    log_info "Select download option for $platform:"
-    echo "Available options:"
-    local i=1
+    local labels=()
     for option in "${options[@]}"; do
-        echo "$i. ${option#*:}"
-        ((i++))
+        labels+=("${option#*:}")
     done
-    echo -n "Enter choice [1-${#options[@]}]: "
-    read -r selection
     
-    if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le "${#options[@]}" ]]; then
-        echo "${options[$((selection-1))]}" | cut -d':' -f1
-    fi
+    local selected_label=$(printf "%s\n" "${labels[@]}" | fzf --prompt="Download option ($platform): " --height=$((${#labels[@]} + 3)) --border)
+    [[ -z "$selected_label" ]] && return
+    
+    for option in "${options[@]}"; do
+        if [[ "${option#*:}" == "$selected_label" ]]; then
+            echo "${option%%:*}"
+            return
+        fi
+    done
 }
 
-# Interactive version that doesn't use subshell
 download_menu_interactive() {
     local url="$1"
     local platform="$2"
-    local options=()
     
-    # Common options for all platforms
-    options+=(
-        "best_quality:Download best quality video"
-        "720p:Download 720p video"
-        "480p:Download 480p video"
-        "audio_mp3:Download audio as MP3"
-        "audio_best:Download best quality audio"
-        "custom_dir:Download to custom directory"
-        "list_formats:List available formats"
-    )
-    
-    # Platform-specific options
-    case $platform in
-        "youtube")
-            options+=(
-                "playlist:Download entire playlist"
-                "subtitles:Download with subtitles"
-                "thumbnail:Download with thumbnail"
-            )
-            ;;
-        "facebook")
-            options+=(
-                "with_cookies:Download using cookies (for private content)"
-                "thumbnail:Download with thumbnail"
-                "metadata:Download with metadata"
-                "gallery_dl:Use gallery-dl instead of yt-dlp"
-            )
-            ;;
-        "social"|*)
-            options+=(
-                "with_cookies:Download using cookies"
-                "gallery_dl:Use gallery-dl (better for social media)"
-                "thumbnail:Download with thumbnail"
-            )
-            ;;
-    esac
-    
-    log_info "Select download option for $platform:"
-    echo "Available options:"
-    local i=1
-    for option in "${options[@]}"; do
-        echo "$i. ${option#*:}"
-        ((i++))
-    done
-    echo -n "Enter choice [1-${#options[@]}]: "
-    read -r selection
-    
-    if [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -ge 1 ]] && [[ "$selection" -le "${#options[@]}" ]]; then
-        local choice=$(echo "${options[$((selection-1))]}" | cut -d':' -f1)
-        echo "[DEBUG] Got choice: $choice"
+    local choice=$(download_menu "$url" "$platform")
+    if [[ -n "$choice" ]]; then
         perform_download "$url" "$choice" "$platform"
     else
-        log_warning "Invalid selection"
+        log_warning "No option selected"
     fi
 }
 
@@ -518,17 +472,27 @@ download_custom_dir() {
     local url="$1"
     local cookies="$2"
     
-    # Generate default path with date and random number
-    local day_name=$(date +"%A")
-    local date_str=$(date +"%d-%m")
-    local random_num=$((RANDOM % 90 + 10))
-    local default_path="/mnt/d/PERSONAL/scrap/${day_name}-${date_str}-${random_num}"
+    local location=$(printf "Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
     
-    echo -n "Enter download directory (or press Enter for default: $default_path): "
-    read -r custom_dir
-    custom_dir="${custom_dir:-$default_path}"
+    local custom_dir
+    case "$location" in
+        "Running-1-backlog")
+            custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+            ;;
+        "Other location")
+            echo -n "Enter download directory: "
+            read -r custom_dir
+            if [[ -z "$custom_dir" ]]; then
+                log_warning "No directory provided, using Running-1-backlog"
+                custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+            fi
+            ;;
+        *)
+            log_warning "No selection, using Running-1-backlog"
+            custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+            ;;
+    esac
     
-    # Create directory if it doesn't exist
     mkdir -p "$custom_dir"
     
     log_info "Downloading to $custom_dir..."
@@ -563,19 +527,41 @@ perform_download() {
         cookies="$cookie_file"
     fi
     
+    # Choose download location (skip for non-download actions)
+    local dl_dir=""
+    if [[ "$choice" != "list_formats" ]]; then
+        local location=$(printf "Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
+        case "$location" in
+            "Running-1-backlog")
+                dl_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+                ;;
+            "Other location")
+                echo -n "Enter download directory: "
+                read -r dl_dir
+                ;;
+        esac
+        dl_dir="${dl_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}}"
+        mkdir -p "$dl_dir"
+        log_info "Downloading to $dl_dir..."
+    fi
+    
+    # Build output and cookie args
+    local -a out_args=()
+    [[ -n "$dl_dir" ]] && out_args+=(-o "$dl_dir/%(title)s.%(ext)s")
+    [[ -n "$cookies" && -f "$cookies" ]] && out_args+=(--cookies "$cookies")
+    
     case $choice in
-        "best_quality") download_best_quality "$url" "$cookies" ;;
-        "720p") download_720p "$url" "$cookies" ;;
-        "480p") download_480p "$url" "$cookies" ;;
-        "audio_mp3") download_audio_mp3 "$url" "$cookies" ;;
-        "audio_best") download_audio_best "$url" "$cookies" ;;
-        "playlist") download_playlist "$url" "$cookies" ;;
-        "subtitles") download_with_subtitles "$url" "$cookies" ;;
-        "thumbnail") download_with_thumbnail "$url" "$cookies" ;;
-        "metadata") download_with_metadata "$url" "$cookies" ;;
+        "best_quality") yt-dlp "${out_args[@]}" "$url" ;;
+        "720p") yt-dlp "${out_args[@]}" -f "best[height<=720]" "$url" ;;
+        "480p") yt-dlp "${out_args[@]}" -f "best[height<=480]" "$url" ;;
+        "audio_mp3") yt-dlp "${out_args[@]}" -x --audio-format mp3 "$url" ;;
+        "audio_best") yt-dlp "${out_args[@]}" -x "$url" ;;
+        "playlist") yt-dlp "${out_args[@]}" "$url" ;;
+        "subtitles") yt-dlp "${out_args[@]}" --write-subs --sub-lang en "$url" ;;
+        "thumbnail") yt-dlp "${out_args[@]}" --write-thumbnail "$url" ;;
+        "metadata") yt-dlp "${out_args[@]}" --write-info-json --write-description "$url" ;;
         "with_cookies") download_with_cookies "$url" "$platform" ;;
         "gallery_dl") download_gallery_dl "$url" ;;
-        "custom_dir") download_custom_dir "$url" "$cookies" ;;
         "list_formats") list_formats "$url" "$cookies" ;;
         *) log_error "Invalid choice" ;;
     esac
@@ -604,69 +590,44 @@ setup_environment() {
     log_note "For Facebook/private content: Set up cookies using browser extensions"
 }
 
-# Enhanced interactive mode
 interactive_mode() {
-    while true; do
-        echo
-        log_info "Universal Video Downloader - Interactive Mode"
-        echo "Supports: YouTube, Facebook, Instagram, Twitter, TikTok, and more"
-        echo
-        echo "1. Download from URL"
-        echo "2. Check installation status"
-        echo "3. Update yt-dlp and gallery-dl"
-        echo "4. Setup cookies for platform"
-        echo "5. Exit"
-        echo
-        echo -n "Select option [1-5]: "
-        read -r main_choice
-        
-        case $main_choice in
-            1)
-                echo -n "Enter video URL: "
-                read -r url
-                
-                platform=$(validate_url "$url")
-                if [[ $? -eq 0 ]]; then
-                    log_success "Valid $platform URL detected"
-                    
-                    # Show video info
-                    if get_video_info "$url" "$platform"; then
-                        echo
-                        echo "[DEBUG] About to call download_menu"
-                        
-                        # Call download menu directly without subshell
-                        download_menu_interactive "$url" "$platform"
-                        
-                    fi
-                else
-                    log_error "Invalid or unsupported URL"
-                fi
-                ;;
-            2)
-                log_info "Checking installation status..."
-                command_exists yt-dlp && log_success "yt-dlp: $(yt-dlp --version)" || log_error "yt-dlp: Not installed"
-                command_exists ffmpeg && log_success "ffmpeg: Installed" || log_error "ffmpeg: Not installed"
-                command_exists fzf && log_success "fzf: Installed" || log_error "fzf: Not installed"
-                command_exists gallery-dl && log_success "gallery-dl: Installed" || log_warning "gallery-dl: Not installed"
-                ;;
-            3)
-                log_info "Updating video downloaders..."
-                pip3 install --upgrade yt-dlp gallery-dl --user && log_success "Downloaders updated" || log_error "Failed to update"
-                ;;
-            4)
-                echo -n "Enter platform name (facebook/instagram/twitter): "
-                read -r platform
-                setup_cookies "$platform"
-                ;;
-            5)
-                log_info "Goodbye!"
-                exit 0
-                ;;
-            *)
-                log_warning "Invalid option"
-                ;;
-        esac
-    done
+    echo
+    local main_choice=$(printf "Download from URL\nCheck installation status\nUpdate yt-dlp and gallery-dl\nSetup cookies for platform\nExit" | fzf --prompt="Video Downloader: " --height=~100% --border)
+    
+    case "$main_choice" in
+        "Download from URL")
+            echo -n "Enter video URL: "
+            read -r url
+            
+            platform=$(validate_url "$url")
+            if [[ $? -eq 0 ]]; then
+                log_success "Valid $platform URL detected"
+                get_video_info "$url" "$platform"
+                echo
+                download_menu_interactive "$url" "$platform"
+            else
+                log_error "Invalid or unsupported URL"
+            fi
+            ;;
+        "Check installation status")
+            log_info "Checking installation status..."
+            command_exists yt-dlp && log_success "yt-dlp: $(yt-dlp --version)" || log_error "yt-dlp: Not installed"
+            command_exists ffmpeg && log_success "ffmpeg: Installed" || log_error "ffmpeg: Not installed"
+            command_exists fzf && log_success "fzf: Installed" || log_error "fzf: Not installed"
+            command_exists gallery-dl && log_success "gallery-dl: Installed" || log_warning "gallery-dl: Not installed"
+            ;;
+        "Update yt-dlp and gallery-dl")
+            log_info "Updating video downloaders..."
+            pip3 install --upgrade yt-dlp gallery-dl --user && log_success "Downloaders updated" || log_error "Failed to update"
+            ;;
+        "Setup cookies for platform")
+            local platform=$(printf "facebook\ninstagram\ntwitter\ntiktok" | fzf --prompt="Select platform: " --height=~100% --border)
+            [[ -n "$platform" ]] && setup_cookies "$platform"
+            ;;
+        "Exit"|"")
+            log_info "Goodbye!"
+            ;;
+    esac
 }
 
 # Main script logic
