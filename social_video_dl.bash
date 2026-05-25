@@ -476,19 +476,19 @@ download_custom_dir() {
     
     local custom_dir
     case "$location" in
-        "Running-1-backlog")
+        "Running Backlog")
             custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
             ;;
         "Other location")
             echo -n "Enter download directory: "
             read -r custom_dir
             if [[ -z "$custom_dir" ]]; then
-                log_warning "No directory provided, using Running-1-backlog"
+                log_warning "No directory provided, using Running Backlog"
                 custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
             fi
             ;;
         *)
-            log_warning "No selection, using Running-1-backlog"
+            log_warning "No selection, using Running Backlog"
             custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
             ;;
     esac
@@ -532,7 +532,7 @@ perform_download() {
     if [[ "$choice" != "list_formats" ]]; then
         local location=$(printf "Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
         case "$location" in
-            "Running-1-backlog")
+            "Running Backlog")
                 dl_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
                 ;;
             "Other location")
