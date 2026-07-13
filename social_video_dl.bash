@@ -271,6 +271,8 @@ download_menu() {
         "youtube")
             options+=(
                 "playlist:Download entire playlist"
+                "browser_cookies:Download with browser cookies (private playlists)"
+                "browser_cookies_audio:Playlist audio MP3 (with browser cookies)"
                 "subtitles:Download with subtitles"
                 "thumbnail:Download with thumbnail"
             )
@@ -546,7 +548,7 @@ perform_download() {
     fi
     
     # Build output and cookie args
-    local -a out_args=()
+    local -a out_args=(--remote-components ejs:github --no-warnings)
     [[ -n "$dl_dir" ]] && out_args+=(-o "$dl_dir/%(title)s.%(ext)s")
     [[ -n "$cookies" && -f "$cookies" ]] && out_args+=(--cookies "$cookies")
     
@@ -557,6 +559,8 @@ perform_download() {
         "audio_mp3") yt-dlp "${out_args[@]}" -x --audio-format mp3 "$url" ;;
         "audio_best") yt-dlp "${out_args[@]}" -x "$url" ;;
         "playlist") yt-dlp "${out_args[@]}" "$url" ;;
+        "browser_cookies") yt-dlp "${out_args[@]}" --cookies-from-browser chrome "$url" ;;
+        "browser_cookies_audio") yt-dlp "${out_args[@]}" --cookies-from-browser chrome -x --audio-format mp3 "$url" ;;
         "subtitles") yt-dlp "${out_args[@]}" --write-subs --sub-lang en "$url" ;;
         "thumbnail") yt-dlp "${out_args[@]}" --write-thumbnail "$url" ;;
         "metadata") yt-dlp "${out_args[@]}" --write-info-json --write-description "$url" ;;
@@ -590,9 +594,47 @@ setup_environment() {
     log_note "For Facebook/private content: Set up cookies using browser extensions"
 }
 
+combine_audio_files() {
+    echo -n "Enter folder containing audio files (or press Enter for Running Backlog): "
+    read -r src_dir
+    src_dir="${src_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}}"
+    
+    if [ ! -d "$src_dir" ]; then
+        log_error "Directory not found: $src_dir"
+        return 1
+    fi
+    
+    local count=$(find "$src_dir" -maxdepth 1 -name "*.mp3" | wc -l)
+    if [ "$count" -eq 0 ]; then
+        log_error "No MP3 files found in $src_dir"
+        return 1
+    fi
+    
+    log_info "Found $count MP3 files in $src_dir"
+    
+    echo -n "Output filename (without extension): "
+    read -r output_name
+    output_name="${output_name:-combined}"
+    local output_file="$src_dir/${output_name}.mp3"
+    
+    # Create concat list
+    local list_file=$(mktemp)
+    find "$src_dir" -maxdepth 1 -name "*.mp3" -print0 | sort -z | while IFS= read -r -d '' f; do
+        echo "file '$(realpath "$f")'" >> "$list_file"
+    done
+    
+    log_info "Combining into: $output_file"
+    if ffmpeg -f concat -safe 0 -i "$list_file" -c copy -y "$output_file" 2>/dev/null; then
+        log_success "Combined $count files into: $output_file"
+    else
+        log_error "Failed to combine files"
+    fi
+    rm -f "$list_file"
+}
+
 interactive_mode() {
     echo
-    local main_choice=$(printf "Download from URL\nCheck installation status\nUpdate yt-dlp and gallery-dl\nSetup cookies for platform\nExit" | fzf --prompt="Video Downloader: " --height=~100% --border)
+    local main_choice=$(printf "Download from URL\nCombine audio files\nCheck installation status\nUpdate yt-dlp and gallery-dl\nSetup cookies for platform\nExit" | fzf --prompt="Video Downloader: " --height=~100% --border)
     
     case "$main_choice" in
         "Download from URL")
@@ -608,6 +650,9 @@ interactive_mode() {
             else
                 log_error "Invalid or unsupported URL"
             fi
+            ;;
+        "Combine audio files")
+            combine_audio_files
             ;;
         "Check installation status")
             log_info "Checking installation status..."
