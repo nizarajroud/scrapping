@@ -545,8 +545,9 @@ perform_download() {
     
     # Choose download location (skip for non-download actions)
     local dl_dir=""
+    local filename_template="%(title)s.%(ext)s"
     if [[ "$choice" != "list_formats" ]]; then
-        local location=$(printf "Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
+        local location=$(printf "Running Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
         case "$location" in
             "Running Backlog")
                 dl_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
@@ -559,12 +560,19 @@ perform_download() {
         esac
         dl_dir="${dl_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}}"
         mkdir -p "$dl_dir"
+        
+        # Choose filename format
+        local name_format=$(printf "Original title\nEp-X (auto numbering)" | fzf --prompt="Filename format: " --height=~100% --border)
+        if [[ "$name_format" == "Ep-X (auto numbering)" ]]; then
+            filename_template="Ep-%(playlist_index)s.%(ext)s"
+        fi
+        
         log_info "Downloading to $dl_dir..."
     fi
     
     # Build output and cookie args
     local -a out_args=(--remote-components ejs:github --no-warnings)
-    [[ -n "$dl_dir" ]] && out_args+=(-o "$dl_dir/%(title)s.%(ext)s")
+    [[ -n "$dl_dir" ]] && out_args+=(-o "$dl_dir/$filename_template")
     [[ -n "$cookies" && -f "$cookies" ]] && out_args+=(--cookies "$cookies")
     
     case $choice in
@@ -609,47 +617,122 @@ setup_environment() {
     log_note "For Facebook/private content: Set up cookies using browser extensions"
 }
 
-combine_audio_files() {
-    echo -n "Enter folder containing audio files (or press Enter for Running Backlog): "
+combine_files() {
+    echo -n "Enter folder containing files (or press Enter for Running Backlog): "
     read -r src_dir
     src_dir="${src_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}}"
+    src_dir=$(win_to_wsl_path "$src_dir")
     
     if [ ! -d "$src_dir" ]; then
         log_error "Directory not found: $src_dir"
         return 1
     fi
     
-    local count=$(find "$src_dir" -maxdepth 1 -name "*.mp3" | wc -l)
+    # Detect media files
+    local -a media_files=()
+    while IFS= read -r -d '' f; do
+        media_files+=("$f")
+    done < <(find "$src_dir" -maxdepth 1 -type f \( -iname "*.mp3" -o -iname "*.mp4" -o -iname "*.webm" -o -iname "*.m4a" -o -iname "*.ogg" -o -iname "*.flac" -o -iname "*.wav" -o -iname "*.mkv" -o -iname "*.avi" -o -iname "*.mov" \) -print0 | sort -z)
+    
+    local count=${#media_files[@]}
     if [ "$count" -eq 0 ]; then
-        log_error "No MP3 files found in $src_dir"
+        log_error "No media files found in $src_dir"
         return 1
     fi
     
-    log_info "Found $count MP3 files in $src_dir"
+    # Detect if all files share same extension
+    local -A ext_count=()
+    for f in "${media_files[@]}"; do
+        local ext="${f##*.}"
+        ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+        ext_count[$ext]=$(( ${ext_count[$ext]:-0} + 1 ))
+    done
+    
+    local extensions="${!ext_count[*]}"
+    local num_extensions=$(echo "$extensions" | wc -w)
+    
+    # Determine if audio-only or has video
+    local has_video=false
+    for ext in $extensions; do
+        case "$ext" in
+            mp4|webm|mkv|avi|mov) has_video=true ;;
+        esac
+    done
+    
+    log_info "Found $count media files ($extensions)"
+    
+    # Choose output format
+    local output_ext
+    if [ "$num_extensions" -eq 1 ]; then
+        output_ext="$extensions"
+        log_info "All files are .$output_ext — will use fast concat (no re-encoding)"
+    else
+        if $has_video; then
+            output_ext=$(printf "mp4\nmp3\nmkv" | fzf --prompt="Output format: " --height=~100% --border)
+        else
+            output_ext=$(printf "mp3\nm4a\nflac" | fzf --prompt="Output format: " --height=~100% --border)
+        fi
+        output_ext="${output_ext:-mp3}"
+        log_info "Mixed formats — will re-encode to .$output_ext"
+    fi
     
     echo -n "Output filename (without extension): "
     read -r output_name
     output_name="${output_name:-combined}"
-    local output_file="$src_dir/${output_name}.mp3"
+    local output_file="$src_dir/${output_name}.${output_ext}"
     
     # Create concat list
     local list_file=$(mktemp)
-    find "$src_dir" -maxdepth 1 -name "*.mp3" -print0 | sort -z | while IFS= read -r -d '' f; do
+    for f in "${media_files[@]}"; do
         echo "file '$(realpath "$f")'" >> "$list_file"
     done
     
-    log_info "Combining into: $output_file"
-    if ffmpeg -f concat -safe 0 -i "$list_file" -c copy -y "$output_file" 2>/dev/null; then
-        log_success "Combined $count files into: $output_file"
+    log_info "Combining $count files into: $output_file"
+    
+    if [ "$num_extensions" -eq 1 ]; then
+        # Same format: fast concat without re-encoding
+        if ffmpeg -f concat -safe 0 -i "$list_file" -c copy -y "$output_file" 2>/dev/null; then
+            log_success "Combined $count files into: $output_file"
+        else
+            log_error "Fast concat failed, retrying with re-encoding..."
+            if ffmpeg -f concat -safe 0 -i "$list_file" -y "$output_file" 2>/dev/null; then
+                log_success "Combined $count files into: $output_file (re-encoded)"
+            else
+                log_error "Failed to combine files"
+            fi
+        fi
     else
-        log_error "Failed to combine files"
+        # Mixed formats: re-encode
+        # Build filter complex for concatenation
+        local -a inputs=()
+        local filter=""
+        for i in "${!media_files[@]}"; do
+            inputs+=(-i "${media_files[$i]}")
+            filter+="[$i:0]"
+        done
+        filter+="concat=n=$count:v=$( $has_video && echo 1 || echo 0 ):a=1"
+        if $has_video; then
+            filter+="[outv][outa]"
+            if ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[outv]" -map "[outa]" -y "$output_file" 2>/dev/null; then
+                log_success "Combined $count files into: $output_file"
+            else
+                log_error "Failed to combine files"
+            fi
+        else
+            filter+="[outa]"
+            if ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[outa]" -y "$output_file" 2>/dev/null; then
+                log_success "Combined $count files into: $output_file"
+            else
+                log_error "Failed to combine files"
+            fi
+        fi
     fi
     rm -f "$list_file"
 }
 
 interactive_mode() {
     echo
-    local main_choice=$(printf "Download from URL\nCombine audio files\nCheck installation status\nUpdate yt-dlp and gallery-dl\nSetup cookies for platform\nExit" | fzf --prompt="Video Downloader: " --height=~100% --border)
+    local main_choice=$(printf "Download from URL\nCombine files\nCheck installation status\nUpdate yt-dlp and gallery-dl\nSetup cookies for platform\nExit" | fzf --prompt="Video Downloader: " --height=~100% --border)
     
     case "$main_choice" in
         "Download from URL")
@@ -666,8 +749,8 @@ interactive_mode() {
                 log_error "Invalid or unsupported URL"
             fi
             ;;
-        "Combine audio files")
-            combine_audio_files
+        "Combine files")
+            combine_files
             ;;
         "Check installation status")
             log_info "Checking installation status..."
