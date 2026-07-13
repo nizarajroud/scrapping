@@ -470,6 +470,18 @@ download_gallery_dl() {
     fi
 }
 
+# Convert Windows path to WSL path if needed (e.g. D:\ZZZ -> /mnt/d/ZZZ)
+win_to_wsl_path() {
+    local path="$1"
+    if [[ "$path" =~ ^([A-Za-z]):[/\\] ]]; then
+        local drive="${BASH_REMATCH[1]}"
+        drive=$(echo "$drive" | tr '[:upper:]' '[:lower:]')
+        path="/mnt/$drive/${path:3}"
+        path="${path//\\//}"
+    fi
+    echo "$path"
+}
+
 download_custom_dir() {
     local url="$1"
     local cookies="$2"
@@ -487,6 +499,8 @@ download_custom_dir() {
             if [[ -z "$custom_dir" ]]; then
                 log_warning "No directory provided, using Running Backlog"
                 custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+            else
+                custom_dir=$(win_to_wsl_path "$custom_dir")
             fi
             ;;
         *)
@@ -540,6 +554,7 @@ perform_download() {
             "Other location")
                 echo -n "Enter download directory: "
                 read -r dl_dir
+                dl_dir=$(win_to_wsl_path "$dl_dir")
                 ;;
         esac
         dl_dir="${dl_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}}"
