@@ -11,6 +11,7 @@ set -e  # Exit on any error
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/.env" ]; then
     RUNNING_TODO_PATH=$(grep -E '^RUNNING_TODO_PATH=' "$SCRIPT_DIR/.env" | cut -d= -f2- | tr -d '"')
+    DAILY_PATH=$(grep -E '^DAILY_PATH=' "$SCRIPT_DIR/.env" | cut -d= -f2- | tr -d '"')
 fi
 
 # Colors for output
@@ -486,26 +487,29 @@ download_custom_dir() {
     local url="$1"
     local cookies="$2"
     
-    local location=$(printf "Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
+    local location=$(printf "Running Backlog\nDaily\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
     
     local custom_dir
     case "$location" in
-        "Running Backlog")
-            custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+        "Running")
+            custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING}"
+            ;;
+        "Daily")
+            custom_dir="${DAILY_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/DAILY}"
             ;;
         "Other location")
             echo -n "Enter download directory: "
             read -r custom_dir
             if [[ -z "$custom_dir" ]]; then
-                log_warning "No directory provided, using Running Backlog"
-                custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+                log_warning "No directory provided, using Running"
+                custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING}"
             else
                 custom_dir=$(win_to_wsl_path "$custom_dir")
             fi
             ;;
         *)
-            log_warning "No selection, using Running Backlog"
-            custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+            log_warning "No selection, using Running"
+            custom_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING}"
             ;;
     esac
     
@@ -547,10 +551,13 @@ perform_download() {
     local dl_dir=""
     local filename_template="%(title)s.%(ext)s"
     if [[ "$choice" != "list_formats" ]]; then
-        local location=$(printf "Running Backlog\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
+        local location=$(printf "Running Backlog\nDaily\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
         case "$location" in
-            "Running Backlog")
-                dl_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}"
+            "Running")
+                dl_dir="${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING}"
+                ;;
+            "Daily")
+                dl_dir="${DAILY_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/DAILY}"
                 ;;
             "Other location")
                 echo -n "Enter download directory: "
@@ -558,7 +565,7 @@ perform_download() {
                 dl_dir=$(win_to_wsl_path "$dl_dir")
                 ;;
         esac
-        dl_dir="${dl_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING/1-BACKLOG}}"
+        dl_dir="${dl_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING}}"
         mkdir -p "$dl_dir"
         
         # Choose filename format
