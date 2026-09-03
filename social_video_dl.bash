@@ -534,6 +534,81 @@ list_formats() {
     fi
 }
 
+# Combine all downloaded playlist items (Ep-XX.*) into a single file
+# named after the playlist. On success, deletes the individual Ep-XX files.
+combine_playlist_items() {
+    local dl_dir="$1"
+    local url="$2"
+
+    log_info "Combining playlist items into a single file..."
+
+    # Collect the downloaded Ep-XX files in numeric order
+    local -a items=()
+    while IFS= read -r f; do
+        items+=("$f")
+    done < <(find "$dl_dir" -maxdepth 1 -type f -name 'Ep-*' | sort -V)
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        log_error "No 'Ep-*' items found in $dl_dir — nothing to combine."
+        return 1
+    fi
+    if [[ ${#items[@]} -eq 1 ]]; then
+        log_warning "Only one item found — skipping combination."
+        return 0
+    fi
+
+    log_info "Found ${#items[@]} items to combine (in order):"
+    for f in "${items[@]}"; do log_note "  $(basename "$f")"; done
+
+    # Resolve the playlist title for the output filename
+    local playlist_title
+    playlist_title=$(yt-dlp --no-warnings --flat-playlist --playlist-items 1 \
+        --print "%(playlist_title)s" "$url" 2>/dev/null | head -n1)
+    # Sanitize (strip filesystem-unfriendly characters); fallback if empty
+    playlist_title=$(printf '%s' "$playlist_title" | tr -d '/\\:*?"<>|' | sed 's/[[:space:]]\+/ /g;s/^ //;s/ $//')
+    [[ -z "$playlist_title" ]] && playlist_title="combined-$(date +%Y%m%d-%H%M%S)"
+
+    # Derive output extension from the first item
+    local ext="${items[0]##*.}"
+    local output="$dl_dir/$playlist_title.$ext"
+
+    # Build a concat-demuxer list file
+    local list_file
+    list_file=$(mktemp)
+    for f in "${items[@]}"; do
+        # Escape single quotes for ffmpeg concat syntax
+        printf "file '%s'\n" "${f//\'/\'\\\'\'}" >> "$list_file"
+    done
+
+    # Fast path: stream copy (no re-encode) — works when all items share codecs
+    log_info "Merging into: $(basename "$output") (stream copy)..."
+    if ffmpeg -y -f concat -safe 0 -i "$list_file" -c copy "$output" >/dev/null 2>&1; then
+        log_success "Combined file created: $output"
+    else
+        # Fallback: re-encode (robust for heterogeneous formats)
+        log_warning "Stream copy failed — retrying with re-encode (slower)..."
+        if ffmpeg -y -f concat -safe 0 -i "$list_file" \
+            -c:v libx264 -c:a aac "$output" >/dev/null 2>&1; then
+            log_success "Combined file created (re-encoded): $output"
+        else
+            log_error "ffmpeg failed to combine items. Individual files kept."
+            rm -f "$list_file"
+            return 1
+        fi
+    fi
+    rm -f "$list_file"
+
+    # Verify output is non-empty before deleting sources
+    if [[ -s "$output" ]]; then
+        log_info "Removing individual items..."
+        for f in "${items[@]}"; do rm -f "$f"; done
+        log_success "Done — kept only: $(basename "$output")"
+    else
+        log_error "Output file is empty — individual files kept for safety."
+        return 1
+    fi
+}
+
 # Enhanced download performer
 perform_download() {
     local url="$1"
@@ -550,6 +625,7 @@ perform_download() {
     # Choose download location (skip for non-download actions)
     local dl_dir=""
     local filename_template="%(title)s.%(ext)s"
+    local combine="no"
     if [[ "$choice" != "list_formats" ]]; then
         local location=$(printf "Running Backlog\nDaily\nOther location" | fzf --prompt="Save location: " --height=~100% --border)
         case "$location" in
@@ -567,13 +643,27 @@ perform_download() {
         esac
         dl_dir="${dl_dir:-${RUNNING_TODO_PATH:-/mnt/g/Mon Drive/SOFTSKILLS/RUNNING}}"
         mkdir -p "$dl_dir"
-        
-        # Choose filename format
-        local name_format=$(printf "Original title\nEp-X (auto numbering)" | fzf --prompt="Filename format: " --height=~100% --border)
-        if [[ "$name_format" == "Ep-X (auto numbering)" ]]; then
-            filename_template="Ep-%(playlist_index)s.%(ext)s"
+
+        # For playlist modes: ask whether to combine all items into one file.
+        # If yes, we force Ep-XX numbering (needed for correct concat order)
+        # and skip the filename-format question entirely.
+        if [[ "$choice" == "playlist" || "$choice" == "browser_cookies" ]]; then
+            local combine_choice=$(printf "No\nYes" | fzf --prompt="Combine all items into one file after download? " --height=~100% --border)
+            if [[ "$combine_choice" == "Yes" ]]; then
+                combine="yes"
+                filename_template="Ep-%(playlist_index)02d.%(ext)s"
+                log_note "Combine mode ON — items will be merged into a single file named after the playlist."
+            fi
         fi
-        
+
+        # Choose filename format (skipped when combine mode is on — Ep-XX is forced)
+        if [[ "$combine" != "yes" ]]; then
+            local name_format=$(printf "Original title\nEp-X (auto numbering)" | fzf --prompt="Filename format: " --height=~100% --border)
+            if [[ "$name_format" == "Ep-X (auto numbering)" ]]; then
+                filename_template="Ep-%(playlist_index)02d.%(ext)s"
+            fi
+        fi
+
         log_info "Downloading to $dl_dir..."
     fi
     
@@ -599,6 +689,12 @@ perform_download() {
         "list_formats") list_formats "$url" "$cookies" ;;
         *) log_error "Invalid choice" ;;
     esac
+    local dl_status=$?
+
+    # If combine mode was requested, merge all downloaded items into one file
+    if [[ "$combine" == "yes" && $dl_status -eq 0 ]]; then
+        combine_playlist_items "$dl_dir" "$url"
+    fi
 }
 
 # Main setup function
