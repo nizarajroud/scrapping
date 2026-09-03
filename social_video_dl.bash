@@ -582,14 +582,15 @@ combine_playlist_items() {
 
     # Fast path: stream copy (no re-encode) — works when all items share codecs
     log_info "Merging into: $(basename "$output") (stream copy)..."
-    if ffmpeg -y -f concat -safe 0 -i "$list_file" -c copy "$output" >/dev/null 2>&1; then
+    if ffmpeg -y -f concat -safe 0 -i "$list_file" -c copy "$output" >/dev/null 2>&1 && [[ -s "$output" ]]; then
         log_success "Combined file created: $output"
     else
-        # Fallback: re-encode (robust for heterogeneous formats)
-        log_warning "Stream copy failed — retrying with re-encode (slower)..."
-        if ffmpeg -y -f concat -safe 0 -i "$list_file" \
-            -c:v libx264 -c:a aac "$output" >/dev/null 2>&1; then
-            log_success "Combined file created (re-encoded): $output"
+        # Fallback: normalize & re-encode (robust for mixed AV1/VP9, 720p/1080p)
+        log_warning "Stream copy failed — normalizing & re-encoding to .mp4 (slower)..."
+        rm -f "$output"
+        output="$dl_dir/$playlist_title.mp4"
+        if _combine_reencode "$output" "true" "${items[@]}"; then
+            :
         else
             log_error "ffmpeg failed to combine items. Individual files kept."
             rm -f "$list_file"
@@ -763,74 +764,118 @@ combine_files() {
     done
     
     log_info "Found $count media files ($extensions)"
-    
+    # For video files: probe ACTUAL codecs/resolutions (extension alone lies —
+    # two .webm can be AV1/VP9 and 720p/1080p, which breaks stream-copy concat).
+    local homogeneous=true
+    if $has_video; then
+        local ref_sig="" sig=""
+        for f in "${media_files[@]}"; do
+            sig=$(ffprobe -v error -select_streams v:0 \
+                -show_entries stream=codec_name,width,height -of csv=p=0 "$f" 2>/dev/null)
+            if [[ -z "$ref_sig" ]]; then
+                ref_sig="$sig"
+            elif [[ "$sig" != "$ref_sig" ]]; then
+                homogeneous=false
+                break
+            fi
+        done
+    fi
+
     # Choose output format
     local output_ext
-    if [ "$num_extensions" -eq 1 ]; then
-        output_ext="$extensions"
-        log_info "All files are .$output_ext — will use fast concat (no re-encoding)"
+    if $has_video; then
+        if [ "$num_extensions" -eq 1 ] && $homogeneous; then
+            output_ext="$extensions"
+            log_info "All files share codec/resolution ($ref_sig) — fast concat (no re-encoding)"
+        else
+            # Mixed codecs/resolutions → must re-encode. mp4/H.264 is the safe default.
+            output_ext="mp4"
+            $homogeneous || log_warning "Files have mixed codecs/resolutions — will normalize & re-encode to .mp4"
+            [ "$num_extensions" -eq 1 ] || log_info "Mixed extensions — re-encoding to .mp4"
+        fi
     else
-        if $has_video; then
-            output_ext=$(printf "mp4\nmp3\nmkv" | fzf --prompt="Output format: " --height=~100% --border)
+        # Audio-only
+        if [ "$num_extensions" -eq 1 ]; then
+            output_ext="$extensions"
+            log_info "All files are .$output_ext — will use fast concat (no re-encoding)"
         else
             output_ext=$(printf "mp3\nm4a\nflac" | fzf --prompt="Output format: " --height=~100% --border)
+            output_ext="${output_ext:-mp3}"
+            log_info "Mixed formats — will re-encode to .$output_ext"
         fi
-        output_ext="${output_ext:-mp3}"
-        log_info "Mixed formats — will re-encode to .$output_ext"
     fi
-    
+
     echo -n "Output filename (without extension): "
     read -r output_name
     output_name="${output_name:-combined}"
     local output_file="$src_dir/${output_name}.${output_ext}"
-    
-    # Create concat list
-    local list_file=$(mktemp)
-    for f in "${media_files[@]}"; do
-        echo "file '$(realpath "$f")'" >> "$list_file"
-    done
-    
+
     log_info "Combining $count files into: $output_file"
-    
-    if [ "$num_extensions" -eq 1 ]; then
-        # Same format: fast concat without re-encoding
+
+    # Decide path: fast concat (homogeneous, single ext) vs filter re-encode (mixed)
+    if $homogeneous && [ "$num_extensions" -eq 1 ]; then
+        # Same codec/resolution/container → fast stream-copy concat
+        local list_file=$(mktemp)
+        for f in "${media_files[@]}"; do
+            echo "file '$(realpath "$f")'" >> "$list_file"
+        done
         if ffmpeg -f concat -safe 0 -i "$list_file" -c copy -y "$output_file" 2>/dev/null; then
             log_success "Combined $count files into: $output_file"
         else
-            log_error "Fast concat failed, retrying with re-encoding..."
-            if ffmpeg -f concat -safe 0 -i "$list_file" -y "$output_file" 2>/dev/null; then
-                log_success "Combined $count files into: $output_file (re-encoded)"
-            else
-                log_error "Failed to combine files"
-            fi
+            log_error "Fast concat failed — falling back to normalize & re-encode..."
+            rm -f "$list_file"
+            _combine_reencode "$output_file" "$has_video" "${media_files[@]}"
+        fi
+        rm -f "$list_file"
+    else
+        # Mixed codecs/resolutions/extensions → concat filter with normalization
+        _combine_reencode "$output_file" "$has_video" "${media_files[@]}"
+    fi
+}
+
+# Helper: concat via filter_complex, normalizing every clip to a common
+# resolution/fps (video) so mixed AV1/VP9 and 720p/1080p sources merge cleanly.
+_combine_reencode() {
+    local output_file="$1"; shift
+    local has_video="$1"; shift
+    local -a files=("$@")
+    local n=${#files[@]}
+
+    local -a inputs=()
+    local filter=""
+    local concat_inputs=""
+    for i in "${!files[@]}"; do
+        inputs+=(-i "${files[$i]}")
+        if [[ "$has_video" == "true" ]]; then
+            # Scale to fit 1920x1080, pad to exact size, fix SAR and fps for concat
+            filter+="[$i:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,setsar=1,fps=30[v$i];"
+            concat_inputs+="[v$i][$i:a]"
+        else
+            concat_inputs+="[$i:a]"
+        fi
+    done
+
+    if [[ "$has_video" == "true" ]]; then
+        filter+="${concat_inputs}concat=n=$n:v=1:a=1[outv][outa]"
+        log_info "Re-encoding $n clips (H.264/AAC, 1080p) — this can take a while..."
+        if ffmpeg "${inputs[@]}" -filter_complex "$filter" \
+            -map "[outv]" -map "[outa]" \
+            -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 192k \
+            -y "$output_file" 2>/dev/null; then
+            log_success "Combined $n files into: $output_file (re-encoded)"
+        else
+            log_error "Failed to combine files"
+            return 1
         fi
     else
-        # Mixed formats: re-encode
-        # Build filter complex for concatenation
-        local -a inputs=()
-        local filter=""
-        for i in "${!media_files[@]}"; do
-            inputs+=(-i "${media_files[$i]}")
-            filter+="[$i:0]"
-        done
-        filter+="concat=n=$count:v=$( $has_video && echo 1 || echo 0 ):a=1"
-        if $has_video; then
-            filter+="[outv][outa]"
-            if ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[outv]" -map "[outa]" -y "$output_file" 2>/dev/null; then
-                log_success "Combined $count files into: $output_file"
-            else
-                log_error "Failed to combine files"
-            fi
+        filter+="${concat_inputs}concat=n=$n:v=0:a=1[outa]"
+        if ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[outa]" -y "$output_file" 2>/dev/null; then
+            log_success "Combined $n files into: $output_file"
         else
-            filter+="[outa]"
-            if ffmpeg "${inputs[@]}" -filter_complex "$filter" -map "[outa]" -y "$output_file" 2>/dev/null; then
-                log_success "Combined $count files into: $output_file"
-            else
-                log_error "Failed to combine files"
-            fi
+            log_error "Failed to combine files"
+            return 1
         fi
     fi
-    rm -f "$list_file"
 }
 
 interactive_mode() {
