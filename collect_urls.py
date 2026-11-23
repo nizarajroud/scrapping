@@ -5,13 +5,15 @@ import subprocess
 import sys
 import os
 import random
+import time
+import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-DB_PATH = "scrapping.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scrapping.db")
 
 def ensure_db_exists():
     """Ensure database and tables exist"""
@@ -179,65 +181,200 @@ def get_reel_links(page_url, profile_path, max_scrolls=1000, delay=2, url_limit=
             browser.close()
             conn.close()
 
+def _href_to_reel_url(href, page_url):
+    """Return the cleaned reel/video URL if href is one, else None (same rules as the Playwright path)."""
+    if not href:
+        return None
+    low = page_url.lower()
+    is_instagram = "instagram.com" in low
+    is_youtube = "youtube.com" in low
+    is_tiktok = "tiktok.com" in low
+    if href.startswith('/'):
+        if is_instagram:
+            href = f"https://www.instagram.com{href}"
+        elif is_youtube:
+            href = f"https://www.youtube.com{href}"
+        elif is_tiktok:
+            href = f"https://www.tiktok.com{href}"
+        else:
+            href = f"https://www.facebook.com{href}"
+    if is_instagram:
+        ok = '/reel/' in href or '/p/' in href
+    elif is_youtube:
+        ok = '/shorts/' in href
+    elif is_tiktok:
+        ok = '/video/' in href
+    else:
+        ok = '/reel/' in href or '/videos/' in href
+    return href.split('?')[0].split('#')[0] if ok else None
+
+
+def get_reel_links_cdp(page_url, max_scrolls=1000, url_limit=50, category_id=None, author=None, parent_url=None):
+    """Same job as get_reel_links, but drives the dedicated Chrome debug instance (CDP, port 9222)
+    that already holds the user's logged-in sessions. No password is read or typed."""
+    import json, urllib.request, websocket
+
+    host = subprocess.run("ip route show default | awk '{print $3}' | head -1", shell=True,
+                          capture_output=True, text=True).stdout.strip() or "127.0.0.1"
+    base = f"http://{host}:9222"
+    try:
+        urllib.request.urlopen(f"{base}/json/version", timeout=5).read()
+    except Exception as e:
+        print(f"❌ Chrome debug injoignable sur {base} ({e}). Lance: chrome-agent-ctl.py ensure")
+        return 0
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO Source (category_id, parent_url, author) VALUES (?, ?, ?)",
+                   (category_id, parent_url, author))
+    conn.commit()
+    cursor.execute("SELECT id FROM Source WHERE category_id=? AND parent_url=? AND author=?",
+                   (category_id, parent_url, author))
+    source_id = cursor.fetchone()[0]
+
+    # Dedicated tab (never touch the user's tabs); closed at the end
+    req = urllib.request.Request(f"{base}/json/new?about:blank", method="PUT")
+    tab = json.load(urllib.request.urlopen(req, timeout=10))
+    ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=30)
+    _id = [0]
+
+    def cmd(method, params=None):
+        _id[0] += 1
+        ws.send(json.dumps({"id": _id[0], "method": method, "params": params or {}}))
+        while True:
+            r = json.loads(ws.recv())
+            if r.get("id") == _id[0]:
+                return r
+
+    def ev(expr):
+        r = cmd("Runtime.evaluate", {"expression": expr, "returnByValue": True})
+        return r.get("result", {}).get("result", {}).get("value")
+
+    total_saved = 0
+    try:
+        cmd("Page.enable")
+        cmd("Runtime.enable")
+        print(f"🌐 (Chrome debug) Navigating to: {page_url}")
+        cmd("Page.navigate", {"url": page_url})
+        time.sleep(6)
+
+        if ev("!!document.querySelector('input[name=\"pass\"]') || document.body.innerText.includes('Informations de compte oubliées') || document.body.innerText.includes('Forgotten account')"):
+            print("❌ La page demande une connexion: connecte-toi à la main dans la fenêtre Chrome debug, puis relance.")
+            return 0
+
+        scroll_count = 0
+        no_new = 0
+        previous_total = 0
+        max_no_new = int(os.getenv('MAX_CONSECUTIVE_SCROLLS', '5'))
+        print("🔄 Starting reel collection and saving to database...")
+        while scroll_count < max_scrolls:
+            ev("window.scrollTo(0, document.body.scrollHeight)")
+            time.sleep(random.uniform(2, 4))
+            hrefs = ev("Array.from(document.querySelectorAll('a[href]')).map(a => a.getAttribute('href'))") or []
+            for href in hrefs:
+                clean_url = _href_to_reel_url(href, page_url)
+                if not clean_url:
+                    continue
+                try:
+                    cursor.execute("INSERT INTO Reels (url, added_date, source_id) VALUES (?, ?, ?)",
+                                   (clean_url, datetime.now().isoformat(), source_id))
+                    conn.commit()
+                    total_saved += 1
+                    print(f"✓ Saved: {clean_url} (Total: {total_saved})")
+                except sqlite3.IntegrityError:
+                    pass
+                if total_saved >= url_limit:
+                    break
+            scroll_count += 1
+            if total_saved >= url_limit:
+                print(f"🏁 Reached {url_limit} URLs limit")
+                break
+            if total_saved > previous_total:
+                no_new = 0
+                previous_total = total_saved
+            else:
+                no_new += 1
+            if scroll_count % 10 == 0:
+                print(f"📊 Scrolled {scroll_count} times, saved {total_saved} URLs")
+            if no_new >= max_no_new:
+                print(f"🏁 No new URLs found after {no_new} scrolls. Ending.")
+                break
+        print(f"\n🎉 Scraping complete! Saved {total_saved} URLs to database")
+    finally:
+        try:
+            ws.close()
+            urllib.request.urlopen(f"{base}/json/close/{tab['id']}", timeout=5).read()
+        except Exception:
+            pass
+        conn.close()
+    return total_saved
+
+
 def main():
+    ap = argparse.ArgumentParser(description="Reel URL collector (Chrome debug by default)")
+    ap.add_argument("--limit", type=int, default=None, help="max URLs to save (overrides MAX_URL)")
+    ap.add_argument("--playwright", action="store_true", help="use the old Playwright engine instead of Chrome debug")
+    ap.add_argument("--url", default=None, help="page URL (skips the prompt)")
+    ap.add_argument("--category", default=None, help="category name (skips the menu)")
+    ap.add_argument("--author", default=None, help="author name (skips the prompt)")
+    args = ap.parse_args()
+
     ensure_db_exists()
-    install_playwright()
-    
+    if args.playwright:
+        install_playwright()
+
     print("🔐 Reel URL Collector & Scraper")
     print("=" * 70)
-    
-    url = input("Enter page URL (Facebook/Instagram/TikTok/YouTube): ").strip()
+
+    url = (args.url or input("Enter page URL (Facebook/Instagram/TikTok/YouTube): ")).strip()
     if not url:
         print("❌ URL is required")
         return
-    
-    # Get categories from database
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM Category ORDER BY name")
     categories = cursor.fetchall()
     conn.close()
-    
     if not categories:
         print("❌ No categories found in database. Please add categories first.")
         return
-    
-    # Ask for category using pyfzf
-    print("\nSelect category:")
+
     category_names = [cat[1] for cat in categories]
-    try:
-        from pyfzf.pyfzf import FzfPrompt
-        fzf = FzfPrompt()
-        selected_category = fzf.prompt(category_names, fzf_options='--no-info')[0]
-    except ImportError:
-        print("Installing pyfzf...")
-        subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pyfzf'])
-        from pyfzf.pyfzf import FzfPrompt
-        fzf = FzfPrompt()
-        selected_category = fzf.prompt(category_names, fzf_options='--no-info')[0]
-    except IndexError:
-        selected_category = category_names[0] if category_names else None
-    
+    if args.category:
+        if args.category not in category_names:
+            print(f"❌ Unknown category: {args.category} (available: {', '.join(category_names)})")
+            return
+        selected_category = args.category
+    else:
+        print("\nSelect category:")
+        try:
+            from pyfzf.pyfzf import FzfPrompt
+        except ImportError:
+            print("Installing pyfzf...")
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', 'pyfzf'])
+            from pyfzf.pyfzf import FzfPrompt
+        try:
+            selected_category = FzfPrompt().prompt(category_names, fzf_options='--no-info')[0]
+        except IndexError:
+            selected_category = None
     if not selected_category:
         print("❌ Category is required")
         return
-    
-    # Get category_id
+
     category_id = next(cat[0] for cat in categories if cat[1] == selected_category)
     print(f"Selected category: {selected_category}")
-    
-    # Ask for author
-    author = input("\nEnter author name: ").strip()
-    if not author:
-        author = "Unknown"
-    
+
+    author = (args.author or input("\nEnter author name: ")).strip() or "Unknown"
     print(f"Author: {author}")
-    
-    url_limit = int(os.getenv('MAX_URL', '500'))
-    
-    profile_path = "/home/nizar/Clone-Chrome-profile/User Data"
-    
-    get_reel_links(url, profile_path, url_limit=url_limit, category_id=category_id, author=author, parent_url=url)
+
+    url_limit = args.limit if args.limit else int(os.getenv('MAX_URL', '500'))
+
+    if args.playwright:
+        profile_path = "/home/nizar/Clone-Chrome-profile/User Data"
+        get_reel_links(url, profile_path, url_limit=url_limit, category_id=category_id, author=author, parent_url=url)
+    else:
+        get_reel_links_cdp(url, url_limit=url_limit, category_id=category_id, author=author, parent_url=url)
 
 if __name__ == "__main__":
     main()
